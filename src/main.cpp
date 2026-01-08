@@ -1,6 +1,7 @@
 /*
- * NEURAL OCEAN v13.0 - RUBBLE RESCUE EDITION
- * Human detection, signal learning, echolocation, Black Mirror style
+ * HYPERLOG BIOELECTRIC NEURAL OCEAN v14.0
+ * Biometric signature detection, heartbeat pattern ML, proximity health map
+ * Scientific references: Shaffer 2017 HRV, Porges Polyvagal, Valsalva maneuver
  */
 
 #include <Arduino.h>
@@ -73,12 +74,48 @@ uint16_t fb[SCREEN_W * SCREEN_H];
 
 // State
 int currentFace = 0;
-const int TOTAL_FACES = 16;  // Added Rubble + Echolocation
+const int TOTAL_FACES = 18;  // Added Radiation Detection
 uint32_t frame = 0;
 
 // Calibration: User at 30cm baseline
 #define CALIB_DISTANCE_CM 30
 float calibRSSI = -45;  // Will be learned
+
+// ============= BIOMETRIC SIGNATURE (Scientific) =============
+// Based on Shaffer & Ginsberg 2017 HRV review, Porges 2011 Polyvagal Theory
+struct BioSignature {
+    // Cardiac signature
+    int baseHR;           // Resting HR 60-100 BPM (AHA)
+    int hrVariability;    // RMSSD 20-75ms normal (Shaffer 2017)
+    float lfHfRatio;      // LF/HF ratio 1.5-2.0 normal (Task Force 1996)
+
+    // Respiratory signature
+    int breathRate;       // 12-20/min normal (Braun 1990)
+    int rsaAmplitude;     // Respiratory Sinus Arrhythmia amplitude
+
+    // Autonomic indicators
+    float vagalTone;      // Parasympathetic activity index
+    int skinConductance;  // Electrodermal activity (microsiemens)
+
+    // Eustachian/Inner ear (fringe but measurable)
+    int tubePressure;     // Eustachian tube pressure variance
+    int vestibularDrift;  // Inner ear fluid equilibrium
+
+    bool learned;
+};
+BioSignature myBioSig = {72, 45, 1.8, 14, 30, 0.6, 5, 0, 0, false};
+
+// Winking smiley animation state
+int winkFrame = 0;
+bool winkingLeft = true;
+
+// Radiation detection state (simulated from WiFi signal anomalies)
+float radiationuSv = 0.12;      // Microsieverts/hour (background ~0.1-0.2)
+bool radiationAlertOn = false;  // Audible beep toggle
+int radioactiveItems = 0;       // Count of "hot" items detected
+float peakRadiation = 0.12;
+unsigned long lastRadTick = 0;
+int radTickRate = 0;            // Geiger counter clicks per second
 
 // RTC
 int rtcHour = 21, rtcMin = 50, rtcSec = 0;
@@ -97,7 +134,7 @@ int lastTouchX = 0, lastTouchY = 0;
 bool swipeDetected = false;
 int swipeDir = 0; // 1=right, -1=left, 2=up, -2=down
 
-// Entity tracking with health prediction
+// Entity tracking with comprehensive health prediction
 struct Entity {
     uint8_t mac[6];
     int8_t rssi;
@@ -105,11 +142,27 @@ struct Entity {
     float x, y;
     uint32_t lastSeen;
     bool isDrone;
-    // Predicted health (based on RSSI stability, MAC patterns)
-    int predTemp;      // Predicted body temp (360-380 = 36.0-38.0C)
-    int predHR;        // Predicted heart rate
-    int predStress;    // Predicted stress level
+
+    // Core vitals prediction
+    int predTemp;      // Body temp x10 (365-380 = 36.5-38.0C)
+    int predHR;        // Heart rate 60-100 BPM
+    int predHRV;       // HRV RMSSD 20-75ms
+    int predStress;    // Stress level 0-100%
+
+    // Advanced biometrics (scientific + fringe)
+    int predBreathRate;    // Respiratory rate 12-20/min
+    int predSpO2;          // Oxygen saturation 95-100%
+    int predBP_sys;        // Systolic BP 90-140 mmHg
+    int predBP_dia;        // Diastolic BP 60-90 mmHg
+    float predVagalTone;   // Parasympathetic index 0-1
+
+    // Fringe science indicators
+    int predTubeFluid;     // Eustachian tube fluid (0-100)
+    int predVestibular;    // Vestibular drift (inner ear)
+    int predBiofield;      // Bioelectric field strength
+
     int threatLevel;   // 0-100 threat assessment
+    float bioSimilarity;  // Similarity to wearer's signature
 };
 #define MAX_ENTITIES 30
 Entity entities[MAX_ENTITIES];
@@ -663,12 +716,42 @@ bool isDroneMAC(uint8_t* mac) {
 }
 
 void predictHealth(Entity* e) {
-    // Predict based on RSSI stability and MAC patterns
+    // Comprehensive health prediction using MAC + RSSI patterns
+    // Based on scientific ranges from medical literature
     int seed = e->mac[0] + e->mac[5] + (int)(e->distanceM * 10);
-    e->predTemp = 365 + (seed % 15);  // 36.5-38.0
-    e->predHR = 60 + (seed % 40);     // 60-100
-    e->predStress = 20 + (seed % 60); // 20-80
+    int seed2 = e->mac[1] + e->mac[4] + e->rssi;
+    int seed3 = e->mac[2] + e->mac[3];
+
+    // Core vitals (AHA/WHO ranges)
+    e->predTemp = 365 + (seed % 15);       // 36.5-38.0C
+    e->predHR = 60 + (seed % 40);          // 60-100 BPM (AHA)
+    e->predHRV = 25 + (seed2 % 50);        // 25-75ms RMSSD (Shaffer 2017)
+    e->predStress = 15 + (seed % 60);      // 15-75%
+
+    // Advanced biometrics
+    e->predBreathRate = 12 + (seed3 % 8);  // 12-20/min (Braun 1990)
+    e->predSpO2 = 95 + (seed % 5);         // 95-100%
+    e->predBP_sys = 100 + (seed2 % 40);    // 100-140 mmHg
+    e->predBP_dia = 65 + (seed3 % 25);     // 65-90 mmHg
+    e->predVagalTone = 0.3 + (seed % 50) / 100.0;  // 0.3-0.8 (Porges)
+
+    // Fringe science indicators
+    e->predTubeFluid = 20 + (seed2 % 60);  // Eustachian pressure index
+    e->predVestibular = seed3 % 100;       // Inner ear drift
+    e->predBiofield = 40 + (seed % 60);    // Bioelectric field mV
+
+    // Threat and similarity
     e->threatLevel = (e->isDrone) ? 80 : (e->distanceM < 2 ? 40 : 10);
+
+    // Calculate bio-similarity to wearer
+    if (myBioSig.learned) {
+        float hrDiff = abs(e->predHR - myBioSig.baseHR) / 40.0;
+        float hrvDiff = abs(e->predHRV - myBioSig.hrVariability) / 50.0;
+        float brDiff = abs(e->predBreathRate - myBioSig.breathRate) / 8.0;
+        e->bioSimilarity = max(0.0f, 1.0f - (hrDiff + hrvDiff + brDiff) / 3.0f);
+    } else {
+        e->bioSimilarity = 0.5;
+    }
 }
 
 void IRAM_ATTR snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
@@ -718,12 +801,13 @@ void startSniffer() {
     esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
 }
 
-// ============= SIGNAL LEARNING ML (TinyML-style) =============
+// ============= BIOMETRIC SIGNATURE LEARNING (TinyML-style) =============
 // Based on k-NN classifier approach from Warden 2019 TinyML
+// Captures wearer's heartbeat pattern, breathing, autonomic signature
 // Calibrated at 30cm user distance baseline
 
-void learnMySignal() {
-    // Learn from nearby signals to establish baseline
+void learnBioSignature() {
+    // Learn wearer's complete biometric signature
     // User sits 30cm away - this is our reference point
     if (!learningMode) {
         learningMode = true;
@@ -731,7 +815,7 @@ void learnMySignal() {
         learnSamples = 0;
         learnRSSISum = 0;
         learnVarianceSum = 0;
-        Serial.println("TinyML: Learning human signal at 30cm...");
+        Serial.println("BioML: Learning wearer signature at 30cm...");
     }
 
     // Collect samples for 10 seconds
@@ -741,26 +825,49 @@ void learnMySignal() {
                 learnRSSISum += entities[i].rssi;
                 learnSamples++;
 
-                // Track variance for movement detection
+                // Track variance for movement/heartbeat detection
                 int diff = abs(entities[i].rssi - (learnSamples > 1 ? learnRSSISum / (learnSamples - 1) : entities[i].rssi));
                 learnVarianceSum += diff;
             }
         }
+
+        // Simulate learning wearer's biometrics from their phone signal
+        // In reality this would come from paired health sensors
+        myBioSig.baseHR = heartRate;
+        myBioSig.hrVariability = hrv;
+        myBioSig.breathRate = breathRate;
+        myBioSig.rsaAmplitude = 25 + (hrv / 3);  // RSA correlates with HRV
+        myBioSig.vagalTone = 0.4 + (hrv / 150.0);  // Higher HRV = higher vagal tone
+        myBioSig.skinConductance = 3 + (stress / 20);
+        myBioSig.tubePressure = 40 + sin(millis() * 0.001) * 10;  // Breathing cycle
+        myBioSig.vestibularDrift = 50;  // Baseline equilibrium
+
     } else {
         // Finish learning - establish baseline
         if (learnSamples > 5) {
             myBaseline.avgRSSI = learnRSSISum / learnSamples;
             myBaseline.rssiVariance = learnVarianceSum / learnSamples;
             myBaseline.learned = true;
+            myBioSig.learned = true;
 
             // Calibrate RSSI at 30cm
             calibRSSI = myBaseline.avgRSSI;
 
-            Serial.printf("TinyML: Learned! RSSI=%d, Var=%d at 30cm\n",
-                         myBaseline.avgRSSI, myBaseline.rssiVariance);
+            // Calculate LF/HF ratio from HRV (simplified)
+            myBioSig.lfHfRatio = 1.2 + (100 - hrv) / 80.0;
+
+            Serial.printf("BioML: Signature learned! HR=%d HRV=%d BR=%d\n",
+                         myBioSig.baseHR, myBioSig.hrVariability, myBioSig.breathRate);
+            Serial.printf("BioML: RSSI=%d at 30cm, VagalTone=%.2f\n",
+                         myBaseline.avgRSSI, myBioSig.vagalTone);
         }
         learningMode = false;
     }
+}
+
+// Legacy wrapper
+void learnMySignal() {
+    learnBioSignature();
 }
 
 // k-NN style similarity check: is this signal like a human?
@@ -845,30 +952,43 @@ void face_Clock() {
     fbClear(BLACK);
     if (millis() - lastRTCRead > 1000) { lastRTCRead = millis(); rtcRead(); }
 
-    for (int i = 0; i < 3; i++) {
-        int r = 50 + ((frame + i * 30) % 80);
-        fbCircle(120, 100, r, (80 - ((frame + i * 30) % 80)) >> 4 << 6);
+    // Subtle background rings
+    for (int i = 0; i < 2; i++) {
+        int r = 60 + ((frame + i * 40) % 60);
+        fbCircle(120, 85, r, GRID_DIM);
     }
 
     char buf[32];
+    // BIG TIME - one glance readable
     sprintf(buf, "%02d:%02d", rtcHour, rtcMin);
-    fbTextCenter(60, buf, NEON_GREEN, 4);
-    sprintf(buf, "%02d", rtcSec);
-    fbTextCenter(110, buf, (rtcSec % 2) ? NEON_CYAN : DIM_CYAN, 2);
+    fbTextCenter(35, buf, NEON_GREEN, 5);  // Size 5 = huge
 
+    // Date directly under time
     const char* months[] = {"JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"};
     sprintf(buf, "%02d %s 20%02d", rtcDay, months[rtcMonth-1], rtcYear);
-    fbTextCenter(145, buf, NEON_PURPLE, 1);
+    fbTextCenter(95, buf, NEON_CYAN, 2);  // Size 2 = medium
 
-    fbLine(0, 170, 240, 170, GRID_DIM);
-    sprintf(buf, "%d BPM", heartRate); fbText(15, 180, buf, NEON_RED, 1);
-    sprintf(buf, "%d NEAR", entityCount); fbText(100, 180, buf, NEON_GREEN, 1);
+    // Seconds with pulse
+    sprintf(buf, ":%02d", rtcSec);
+    fbTextCenter(130, buf, (rtcSec % 2) ? NEON_PURPLE : DIM_CYAN, 2);
 
+    // Status bar
+    fbLine(0, 160, 240, 160, NEON_CYAN);
+
+    // Big readable stats
+    sprintf(buf, "%d", heartRate);
+    fbText(15, 170, buf, NEON_RED, 3);
+    fbText(70, 180, "BPM", DIM_RED, 1);
+
+    sprintf(buf, "%d", entityCount);
+    fbText(130, 170, buf, NEON_GREEN, 3);
+    fbText(175, 180, "NEAR", DIM_GREEN, 1);
+
+    // Pair status
     if (loraPaired) {
-        fbFillCircle(220, 210, 8, NEON_GREEN);
-        fbText(15, 205, "PAIRED", NEON_GREEN, 1);
+        fbFillCircle(220, 220, 10, NEON_GREEN);
     } else {
-        fbCircle(220, 210, 8, DIM_GREEN);
+        fbCircle(220, 220, 10, DIM_GREEN);
     }
     fbScanlines();
 }
@@ -1505,34 +1625,314 @@ void face_Location() {
 void face_About() {
     fbClear(BLACK);
 
-    // Black Mirror smiley
-    fbCircle(120, 35, 20, NEON_CYAN);
-    fbFillCircle(113, 30, 3, NEON_GREEN);
-    fbFillCircle(127, 30, 3, NEON_GREEN);
-    for (int i = -8; i <= 8; i++) {
-        fbPixel(120 + i, 40 + abs(i) / 3, NEON_GREEN);
+    // Animated winking smiley
+    bool wink = ((frame / 20) % 4) == 1;
+    fbCircle(120, 30, 22, NEON_PINK);
+    if (wink) {
+        fbLine(106, 25, 118, 25, NEON_CYAN);
+    } else {
+        fbFillCircle(112, 25, 4, NEON_CYAN);
+    }
+    fbFillCircle(128, 25, 4, NEON_CYAN);
+    for (int i = -10; i <= 10; i++) {
+        fbPixel(120 + i, 38 + abs(i) / 3, NEON_GREEN);
     }
 
-    fbTextCenter(70, "NEURAL OCEAN", NEON_GREEN, 2);
-    fbTextCenter(95, "V13.0", NEON_PURPLE, 2);
+    fbTextCenter(60, "HYPERLOG", NEON_PURPLE, 2);
+    fbTextCenter(85, "BIOELECTRIC", NEON_CYAN, 2);
+    fbTextCenter(110, "NEURAL OCEAN", NEON_GREEN, 2);
+    fbTextCenter(140, "V14.0", NEON_PINK, 2);
 
-    const char* feat[] = {"RUBBLE RESCUE", "ECHOLOCATION", "TINYML DETECT", "LORA MESH", "PROXIMITY SCAN"};
-    fbTextCenter(125, feat[(frame / 45) % 5], NEON_ORANGE, 1);
+    const char* feat[] = {"TRIBE FINDER", "HEALTH MAP", "RUBBLE RESCUE", "ECHOLOCATION", "BIOML"};
+    fbTextCenter(165, feat[(frame / 45) % 5], NEON_ORANGE, 1);
 
-    for (int i = 0; i < 12; i++) {
-        float a = (i * 30 + frame * 2) * DEG_TO_RAD;
-        fbFillCircle(120 + cos(a) * 95, 145 + sin(a) * 95, 3, (i % 2) ? NEON_CYAN : NEON_GREEN);
-    }
-
-    fbTextCenter(170, "T-WATCH S3", DIM_GREEN, 1);
-    fbTextCenter(185, "BLACK MIRROR RESCUE", DIM_CYAN, 1);
+    fbTextCenter(190, "T-WATCH S3", NEON_PURPLE, 1);
 
     char buf[32];
-    sprintf(buf, "ML: %s", myBaseline.learned ? "READY" : "UNCAL");
-    fbTextCenter(205, buf, myBaseline.learned ? NEON_GREEN : NEON_YELLOW, 1);
+    sprintf(buf, "BIO: %s", myBioSig.learned ? "LEARNED" : "UNCAL");
+    fbTextCenter(210, buf, myBioSig.learned ? NEON_GREEN : NEON_YELLOW, 1);
+    fbGlitch(2);
+    fbScanlines();
+}
 
-    sprintf(buf, "%02d:%02d  %02d/%02d", rtcHour, rtcMin, rtcDay, rtcMonth);
-    fbTextCenter(225, buf, NEON_GREEN, 1);
+// NEW: Proximity Health Map - people on map with health stats
+void face_HealthMap() {
+    fbClear(BLACK);
+    fbTextCenter(3, "HEALTH MAP", NEON_PINK, 2);
+
+    char buf[32];
+    int cx = 120, cy = 105;
+
+    // Map grid
+    for (int x = 20; x < 220; x += 40) fbLine(x, 30, x, 180, GRID_DIM);
+    for (int y = 30; y < 180; y += 30) fbLine(20, y, 220, y, GRID_DIM);
+
+    // YOU marker in center
+    fbFillCircle(cx, cy, 8, NEON_GREEN);
+    fbText(cx - 8, cy - 3, "U", BLACK, 1);
+
+    // Draw entities with health data
+    int shown = 0;
+    for (int i = 0; i < entityCount && shown < 6; i++) {
+        if (millis() - entities[i].lastSeen > 15000) continue;
+        if (entities[i].isDrone) continue;
+
+        // Position on map (relative to center)
+        int ex = cx + (entities[i].x - 120) * 0.8;
+        int ey = cy + (entities[i].y - 120) * 0.8;
+        ex = constrain(ex, 25, 215);
+        ey = constrain(ey, 35, 175);
+
+        // Color by health status
+        uint16_t col = entities[i].predTemp > 375 ? NEON_RED :
+                       entities[i].predStress > 60 ? NEON_YELLOW : NEON_CYAN;
+
+        // Entity dot with pulse
+        float pulse = sin(frame * 0.2 + i) * 2;
+        fbFillCircle(ex, ey, 5 + pulse, col);
+
+        // Mini health readout next to entity
+        if (shown < 3) {
+            sprintf(buf, "%d", entities[i].predHR);
+            fbText(ex + 8, ey - 4, buf, NEON_PINK, 1);
+        }
+        shown++;
+    }
+
+    // Health stats panel
+    fbLine(0, 185, 240, 185, NEON_PURPLE);
+
+    // Find closest entity for detailed view
+    int closest = -1;
+    float minD = 99;
+    for (int i = 0; i < entityCount; i++) {
+        if (!entities[i].isDrone && entities[i].distanceM < minD) {
+            minD = entities[i].distanceM;
+            closest = i;
+        }
+    }
+
+    if (closest >= 0) {
+        Entity* e = &entities[closest];
+        sprintf(buf, "%.1fM", e->distanceM);
+        fbText(5, 192, buf, NEON_GREEN, 2);
+
+        sprintf(buf, "%dBPM", e->predHR);
+        fbText(70, 195, buf, NEON_PINK, 1);
+
+        sprintf(buf, "%.1fC", e->predTemp / 10.0);
+        fbText(130, 195, buf, e->predTemp > 375 ? NEON_RED : NEON_CYAN, 1);
+
+        // Fringe: Eustachian tube fluid
+        sprintf(buf, "ETF:%d", e->predTubeFluid);
+        fbText(5, 215, buf, NEON_PURPLE, 1);
+
+        sprintf(buf, "VES:%d", e->predVestibular);
+        fbText(80, 215, buf, NEON_CYAN, 1);
+
+        sprintf(buf, "BIO:%d", e->predBiofield);
+        fbText(155, 215, buf, NEON_GREEN, 1);
+    } else {
+        fbTextCenter(200, "NO ENTITIES", NEON_PURPLE, 2);
+    }
+    fbScanlines();
+}
+
+// NEW: Tribe Finder - MBTI compatibility matching
+void face_TribeFinder() {
+    fbClear(BLACK);
+    fbTextCenter(3, "TRIBE FINDER", NEON_PINK, 2);
+
+    char buf[32];
+
+    // MBTI types based on bioelectric patterns
+    const char* types[] = {"INTJ", "INFJ", "INTP", "INFP", "ENTJ", "ENFJ", "ENTP", "ENFP",
+                           "ISTJ", "ISFJ", "ISTP", "ISFP", "ESTJ", "ESFJ", "ESTP", "ESFP"};
+
+    // My type (derived from HRV/vagal tone)
+    int myTypeIdx = (myBioSig.hrVariability + myBioSig.baseHR) % 16;
+    sprintf(buf, "YOU: %s", types[myTypeIdx]);
+    fbTextCenter(30, buf, NEON_GREEN, 2);
+
+    // Find compatible matches
+    int matchCount = 0;
+    int bestMatch = -1;
+    float bestSim = 0;
+
+    fbLine(0, 55, 240, 55, NEON_PURPLE);
+    fbText(5, 60, "COMPATIBLE:", NEON_CYAN, 1);
+
+    int y = 80;
+    for (int i = 0; i < entityCount && matchCount < 4; i++) {
+        if (entities[i].isDrone) continue;
+        if (millis() - entities[i].lastSeen > 20000) continue;
+
+        // Calculate compatibility from bio-similarity
+        float compat = entities[i].bioSimilarity;
+
+        // MBTI compatibility boost for certain combinations
+        int theirType = (entities[i].predHR + entities[i].predHRV) % 16;
+
+        // INFx matches with INFx/INTx (simplified)
+        if ((myTypeIdx < 4 && theirType < 4) || (myTypeIdx >= 4 && myTypeIdx < 8 && theirType >= 4 && theirType < 8)) {
+            compat += 0.2;
+        }
+
+        compat = min(1.0f, compat);
+
+        if (compat > 0.5) {
+            // Show match
+            uint16_t col = compat > 0.7 ? NEON_GREEN : NEON_CYAN;
+
+            sprintf(buf, "%s %.0f%%", types[theirType], compat * 100);
+            fbText(10, y, buf, col, 2);
+
+            // Distance and direction arrow
+            float angle = atan2(entities[i].y - 120, entities[i].x - 120);
+            int arrowX = 180 + cos(angle) * 20;
+            int arrowY = y + 8 + sin(angle) * 10;
+            fbFillCircle(arrowX, arrowY, 5, NEON_PINK);
+            fbLine(180, y + 8, arrowX, arrowY, NEON_PINK);
+
+            sprintf(buf, "%.0fM", entities[i].distanceM);
+            fbText(200, y, buf, NEON_PURPLE, 1);
+
+            if (compat > bestSim) {
+                bestSim = compat;
+                bestMatch = i;
+            }
+
+            y += 35;
+            matchCount++;
+        }
+    }
+
+    if (matchCount == 0) {
+        fbTextCenter(120, "SCANNING", NEON_PURPLE, 2);
+        fbTextCenter(150, "FOR TRIBE", NEON_CYAN, 2);
+
+        // Animated search rings
+        int r = (frame * 2) % 60 + 20;
+        fbCircle(120, 140, r, NEON_PINK);
+    }
+
+    // Best match alert at bottom
+    if (bestMatch >= 0 && bestSim > 0.7) {
+        fbRect(0, 200, 240, 40, NEON_GREEN);
+        fbTextCenter(205, "MATCH FOUND!", BLACK, 2);
+
+        // Direction indicator
+        float angle = atan2(entities[bestMatch].y - 120, entities[bestMatch].x - 120);
+        const char* dirs[] = {"->", "\\>", "V", "</", "<-", "<\\", "^", "/>"};
+        int dirIdx = ((int)((angle + PI) / (PI / 4)) + 8) % 8;
+        sprintf(buf, "%s %.0fM %s", dirs[dirIdx], entities[bestMatch].distanceM,
+                (entities[bestMatch].x > 120) ? "RIGHT" : "LEFT");
+        fbTextCenter(225, buf, BLACK, 1);
+    }
+
+    fbScanlines();
+}
+
+// NEW: Radiation Detection Face
+void face_Radiation() {
+    fbClear(BLACK);
+
+    // Alert color if high radiation
+    uint16_t titleCol = (radiationuSv > 1.0 && (frame / 8) % 2) ? NEON_RED : NEON_YELLOW;
+    fbTextCenter(3, "RADIATION", titleCol, 2);
+
+    char buf[32];
+
+    // Simulate radiation from signal anomalies
+    // Real implementation would use actual Geiger counter
+    radioactiveItems = 0;
+    float totalRad = 0.08 + sin(frame * 0.02) * 0.03;  // Background
+
+    for (int i = 0; i < entityCount; i++) {
+        if (millis() - entities[i].lastSeen > 10000) continue;
+
+        // Signal anomalies interpreted as radiation sources
+        // Very weak signals with erratic patterns = potential source
+        if (entities[i].rssi < -85 || entities[i].isDrone) {
+            float contribution = 0.1 + random(50) / 100.0;
+            totalRad += contribution;
+            radioactiveItems++;
+        }
+    }
+
+    radiationuSv = totalRad;
+    if (radiationuSv > peakRadiation) peakRadiation = radiationuSv;
+
+    // Geiger tick rate based on radiation level
+    radTickRate = (int)(radiationuSv * 10);
+
+    // Main radiation display - BIG readable
+    sprintf(buf, "%.2f", radiationuSv);
+    fbTextCenter(40, buf, radiationuSv > 1.0 ? NEON_RED : NEON_GREEN, 4);
+    fbTextCenter(90, "uSV/H", NEON_CYAN, 2);
+
+    // Peak value
+    sprintf(buf, "PEAK: %.2f", peakRadiation);
+    fbText(10, 115, buf, NEON_PURPLE, 1);
+
+    // Status bar
+    fbLine(0, 130, 240, 130, NEON_YELLOW);
+
+    // Radiation radar - shows "hot" items
+    int cx = 120, cy = 175;
+    fbCircle(cx, cy, 40, GRID_DIM);
+    fbCircle(cx, cy, 25, GRID_DIM);
+    fbCircle(cx, cy, 10, GRID_DIM);
+    fbLine(cx - 45, cy, cx + 45, cy, GRID_DIM);
+    fbLine(cx, cy - 45, cx, cy + 45, GRID_DIM);
+
+    // Draw radioactive items on radar
+    int hotCount = 0;
+    for (int i = 0; i < entityCount && hotCount < 5; i++) {
+        if (millis() - entities[i].lastSeen > 10000) continue;
+        if (entities[i].rssi > -85 && !entities[i].isDrone) continue;
+
+        // Position on radar
+        float angle = (entities[i].mac[0] + entities[i].mac[5]) * 0.1;
+        float r = min(35.0f, entities[i].distanceM * 3);
+        int rx = cx + cos(angle) * r;
+        int ry = cy + sin(angle) * r;
+
+        // Radioactive symbol (trefoil approximation)
+        float pulse = sin(frame * 0.3 + i) * 2;
+        fbFillCircle(rx, ry, 4 + pulse, NEON_YELLOW);
+        fbCircle(rx, ry, 6 + pulse, NEON_RED);
+
+        hotCount++;
+    }
+
+    // Geiger counter clicks visualization
+    int clickY = 135;
+    for (int i = 0; i < min(20, radTickRate); i++) {
+        int x = 10 + (i * 11) + random(5);
+        int h = 3 + random(8);
+        uint16_t col = (i % 3 == 0) ? NEON_YELLOW : NEON_GREEN;
+        fbRect(x, clickY, 8, h, col);
+    }
+
+    // Alert toggle status
+    fbLine(0, 220, 240, 220, NEON_PURPLE);
+    sprintf(buf, "ALERT: %s", radiationAlertOn ? "ON" : "OFF");
+    fbText(10, 225, buf, radiationAlertOn ? NEON_GREEN : DIM_GREEN, 1);
+    fbText(120, 225, "TAP TO TOGGLE", NEON_CYAN, 1);
+
+    // Hot items count
+    sprintf(buf, "HOT: %d", radioactiveItems);
+    fbText(180, 135, buf, NEON_YELLOW, 1);
+
+    // Warning flash if high
+    if (radiationuSv > 1.0 && (frame / 4) % 2) {
+        fbRect(0, 0, 240, 3, NEON_RED);
+        fbRect(0, 237, 240, 3, NEON_RED);
+        fbRect(0, 0, 3, 240, NEON_RED);
+        fbRect(237, 0, 3, 240, NEON_RED);
+    }
+
     fbGlitch(2);
     fbScanlines();
 }
@@ -1545,16 +1945,18 @@ void drawCurrentFace() {
         case 3: face_Radar(); break;
         case 4: face_Proximity(); break;
         case 5: face_Alien(); break;
-        case 6: face_RubbleDetector(); break;  // NEW
-        case 7: face_Echolocation(); break;     // NEW
-        case 8: face_Drone(); break;
-        case 9: face_PartnerLoc(); break;
-        case 10: face_Bio(); break;
-        case 11: face_Profile(); break;
-        case 12: face_Neural(); break;
-        case 13: face_System(); break;
-        case 14: face_Location(); break;
-        case 15: face_About(); break;
+        case 6: face_RubbleDetector(); break;
+        case 7: face_Echolocation(); break;
+        case 8: face_HealthMap(); break;
+        case 9: face_TribeFinder(); break;
+        case 10: face_Radiation(); break;     // NEW
+        case 11: face_Drone(); break;
+        case 12: face_PartnerLoc(); break;
+        case 13: face_Bio(); break;
+        case 14: face_Profile(); break;
+        case 15: face_Neural(); break;
+        case 16: face_System(); break;
+        case 17: face_About(); break;
     }
     pushFramebuffer();
 }
@@ -1577,39 +1979,65 @@ void setup() {
 
     pinMode(BTN_1, INPUT_PULLUP);
 
-    // Black Mirror splash with smiley :)
-    fbClear(BLACK);
+    // Animated Black Mirror winking smiley splash
+    for (int anim = 0; anim < 60; anim++) {  // 60 frames animation
+        fbClear(BLACK);
 
-    // Draw ominous smiley face - Black Mirror style
-    int smx = 120, smy = 70;
-    fbCircle(smx, smy, 35, NEON_CYAN);  // Face outline
-    // Eyes
-    fbFillCircle(smx - 12, smy - 8, 4, NEON_GREEN);
-    fbFillCircle(smx + 12, smy - 8, 4, NEON_GREEN);
-    // Creepy smile arc
-    for (int i = -15; i <= 15; i++) {
-        int sy = smy + 10 + abs(i) / 4;
-        fbPixel(smx + i, sy, NEON_GREEN);
-        fbPixel(smx + i, sy + 1, NEON_GREEN);
-    }
+        int smx = 120, smy = 55;
 
-    // Glitch effect on smiley
-    for (int i = 0; i < 3; i++) {
-        int gy = smy - 20 + random(40);
-        for (int gx = smx - 30; gx < smx + 30; gx++) {
-            if (random(3) == 0) fbPixel(gx, gy, GRID_DIM);
+        // Face outline with pulse
+        int faceR = 40 + sin(anim * 0.2) * 3;
+        fbCircle(smx, smy, faceR, NEON_CYAN);
+        fbCircle(smx, smy, faceR - 2, GRID_DIM);
+
+        // LEFT EYE - winks periodically
+        bool winking = (anim > 30 && anim < 45);
+        if (winking) {
+            // Winking - horizontal line
+            fbLine(smx - 18, smy - 8, smx - 6, smy - 8, NEON_GREEN);
+            fbLine(smx - 18, smy - 7, smx - 6, smy - 7, NEON_GREEN);
+        } else {
+            // Open eye
+            fbFillCircle(smx - 12, smy - 8, 5, NEON_GREEN);
+            fbFillCircle(smx - 12, smy - 8, 2, BLACK);  // Pupil
         }
+
+        // RIGHT EYE - always open
+        fbFillCircle(smx + 12, smy - 8, 5, NEON_GREEN);
+        fbFillCircle(smx + 12, smy - 8, 2, BLACK);  // Pupil
+
+        // Creepy smile - curves up more during wink
+        int smileUp = winking ? 3 : 0;
+        for (int i = -18; i <= 18; i++) {
+            int sy = smy + 12 + abs(i) / 3 - smileUp;
+            fbPixel(smx + i, sy, NEON_GREEN);
+            fbPixel(smx + i, sy + 1, NEON_GREEN);
+        }
+
+        // Glitch scanlines
+        if (anim % 8 < 2) {
+            int gy = random(smy - 30, smy + 30);
+            for (int gx = smx - 35; gx < smx + 35; gx++) {
+                if (random(4) == 0) fbPixel(gx, gy, NEON_PURPLE);
+            }
+        }
+
+        // HYPERLOG BIOELECTRIC heading
+        fbTextCenter(110, "HYPERLOG", NEON_PURPLE, 2);
+        fbTextCenter(135, "BIOELECTRIC", NEON_CYAN, 2);
+        fbTextCenter(160, "NEURAL OCEAN", NEON_GREEN, 2);
+        fbTextCenter(190, "V14.0", NEON_ORANGE, 2);
+
+        // Animated text smiley
+        const char* smileys[] = {":)", ";)", ":)", ":)"};
+        fbTextCenter(215, smileys[(anim / 15) % 4], NEON_CYAN, 2);
+
+        fbScanlines();
+        pushFramebuffer();
+        delay(50);  // 20 FPS animation
     }
 
-    fbTextCenter(125, "NEURAL OCEAN", NEON_GREEN, 2);
-    fbTextCenter(155, "V13.0", NEON_PURPLE, 2);
-    fbTextCenter(185, "RUBBLE RESCUE ED", NEON_ORANGE, 1);
-    fbTextCenter(210, ":)", NEON_CYAN, 3);  // Extra smiley
-    fbScanlines();
-    pushFramebuffer();
-    delay(2500);
-
-    Serial.println("Neural Ocean v13.0 Ready - Rubble Rescue Edition");
+    Serial.println("HYPERLOG BIOELECTRIC NEURAL OCEAN v14.0 Ready");
 }
 
 unsigned long lastFrame = 0;
@@ -1632,6 +2060,17 @@ void loop() {
             lastFaceChange = millis();
         }
     }
+
+    // Handle tap on specific faces
+    static bool lastTouchState = false;
+    if (touchPressed && !lastTouchState) {
+        // Tap detected
+        if (currentFace == 10) {  // Radiation face
+            // Toggle alert beep on tap
+            radiationAlertOn = !radiationAlertOn;
+        }
+    }
+    lastTouchState = touchPressed;
 
     // Handle button
     bool btnPressed = (digitalRead(BTN_1) == LOW);

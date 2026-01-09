@@ -1,7 +1,9 @@
 /*
- * HYPERLOG BIOELECTRIC NEURAL OCEAN v14.0
- * Biometric signature detection, heartbeat pattern ML, proximity health map
- * Scientific references: Shaffer 2017 HRV, Porges Polyvagal, Valsalva maneuver
+ * HYPERLOG BIOELECTRIC NEURAL OCEAN v15.0
+ * 58 Spectacular Watch Faces with Black Mirror Effects
+ * Features: Body Scanner, Sonar Emulation, Quantum Detection, Ternary Logic
+ * Scientific references: Kyle 2004 BIA, Ma 2019 WiFi ToF, Nielsen 2010 Quantum
+ * Shaffer 2017 HRV, Porges 2011 Polyvagal, Berger 1929 EEG, Boucsein 2012 EDA
  */
 
 #include <Arduino.h>
@@ -12,19 +14,26 @@
 #include <math.h>
 #include <driver/i2s.h>
 
-// Pins
+// Second I2C bus for touch controller
+TwoWire TouchWire = TwoWire(1);
+
+// Pins - Main I2C (PMIC, RTC)
 #define I2C_SDA     10
 #define I2C_SCL     11
+
+// Touch I2C - SEPARATE BUS on T-Watch S3 (FT6336U)
+#define TOUCH_SDA   39
+#define TOUCH_SCL   40
+#define TOUCH_INT   16
+// Note: TOUCH_RST is not connected on T-Watch S3
+#define FT6336_ADDR  0x38  // Focaltech FT6336U address
+
+// Display
 #define TFT_BL      45
 #define TFT_CS      12
 #define TFT_DC      38
 #define TFT_MOSI    13
 #define TFT_SCLK    18
-
-// Touch CST816S
-#define TOUCH_INT   16
-#define TOUCH_RST   17
-#define CST816_ADDR 0x15
 
 // LoRa SX1262
 #define LORA_MOSI   1
@@ -72,9 +81,12 @@
 // Framebuffer
 uint16_t fb[SCREEN_W * SCREEN_H];
 
+// Forward declarations
+float rssiToDistance(int rssi);
+
 // State
 int currentFace = 0;
-const int TOTAL_FACES = 18;  // Added Radiation Detection
+const int TOTAL_FACES = 60;  // 18 original + 40 new + 2 walkie-talkie faces
 uint32_t frame = 0;
 
 // Calibration: Arm length from heart to wrist
@@ -120,6 +132,216 @@ int radioactiveItems = 0;       // Count of "hot" items detected
 float peakRadiation = 0.12;
 unsigned long lastRadTick = 0;
 int radTickRate = 0;            // Geiger counter clicks per second
+
+// ============= QUANTUM-INSPIRED DETECTION (Deutsch-Jozsa style) =============
+// Based on quantum probability superposition concepts
+// Nielsen & Chuang 2010 "Quantum Computation and Quantum Information"
+struct Qubit {
+    float alpha;    // Probability amplitude |0⟩ (no human)
+    float beta;     // Probability amplitude |1⟩ (human present)
+    float phase;    // Phase angle (entanglement indicator)
+    bool collapsed; // Measured state
+    int result;     // 0, 1, or -1 (superposition)
+};
+Qubit qubits[8];    // 8-qubit quantum-style register
+float quantumCoherence = 1.0;   // Decoherence factor
+float entanglementStrength = 0.0;
+int quantumIterations = 0;
+
+// Max entities (defined early for array sizing)
+#ifndef MAX_ENTITIES
+#define MAX_ENTITIES 30
+#endif
+
+// ============= TERNARY LOGIC DETECTION (Łukasiewicz 1920) =============
+// Three-valued logic: True(1), False(-1), Unknown(0)
+// Kleene 1938 strong logic for uncertainty
+struct TernaryState {
+    int8_t humanPresent;    // -1=no, 0=unknown, 1=yes
+    int8_t threatLevel;     // -1=safe, 0=unknown, 1=threat
+    int8_t bioMatch;        // -1=foreign, 0=unknown, 1=familiar
+    float confidence;       // Fuzzy confidence 0.0-1.0
+};
+TernaryState ternaryDetect[MAX_ENTITIES];
+int ternaryTrue = 0, ternaryFalse = 0, ternaryUnknown = 0;
+
+// ============= SONAR EMULATION (Time-of-Flight WiFi) =============
+// Based on Fine Timing Measurement (FTM) IEEE 802.11mc
+// Ma et al. 2019 "WiFi-based indoor positioning"
+#define SONAR_SECTORS 16
+#define SONAR_RANGE_M 25
+struct SonarPing {
+    float distance;         // Meters
+    float strength;         // Signal return strength 0-100
+    float velocity;         // Doppler-like velocity estimate m/s
+    uint32_t lastPing;
+    bool hasTarget;
+};
+SonarPing sonarMap[SONAR_SECTORS];
+float sonarSweepAngle = 0;
+int sonarTargetCount = 0;
+float sonarNearestM = 99.9;
+unsigned long lastSonarPulse = 0;
+
+// ============= NEURAL NETWORK STATE (TinyML McCulloch-Pitts) =============
+// Simplified perceptron for entity classification
+// Rosenblatt 1958, updated Warden 2019 TinyML
+#define NN_INPUTS 6
+#define NN_HIDDEN 4
+#define NN_OUTPUTS 3
+float nnWeights1[NN_INPUTS][NN_HIDDEN];
+float nnWeights2[NN_HIDDEN][NN_OUTPUTS];
+float nnBias1[NN_HIDDEN], nnBias2[NN_OUTPUTS];
+float nnOutput[NN_OUTPUTS];  // 0=Human, 1=Drone, 2=Unknown
+bool nnTrained = false;
+
+// ============= ADVANCED BIOMETRIC STATES =============
+// Circadian rhythm (Czeisler 1999)
+float circadianPhase = 0;   // 0-24 hours
+float melatoninLevel = 0.5; // 0-1 simulated
+float cortisolLevel = 0.5;  // 0-1 morning peak
+
+// Electrodermal activity (Boucsein 2012)
+float edaLevel = 5.0;       // Skin conductance microsiemens
+float edaPhasic = 0;        // Fast response component
+float edaTonic = 5.0;       // Baseline level
+
+// Brain wave simulation (Berger 1929 EEG bands)
+float alphaWave = 0.5;      // 8-13 Hz relaxed
+float betaWave = 0.3;       // 14-30 Hz alert
+float thetaWave = 0.2;      // 4-7 Hz drowsy
+float deltaWave = 0.0;      // 0.5-4 Hz deep sleep
+float gammaWave = 0.1;      // 30-100 Hz cognition
+
+// Chakra/Biofield (fringe but visually spectacular)
+float chakraEnergy[7] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
+const char* chakraNames[] = {"ROOT", "SACRAL", "SOLAR", "HEART", "THROAT", "3RDEYE", "CROWN"};
+uint16_t chakraColors[] = {NEON_RED, NEON_ORANGE, NEON_YELLOW, NEON_GREEN, NEON_CYAN, NEON_PURPLE, NEON_PINK};
+
+// Aura detection (Kirlian-style visualization)
+float auraStrength = 0.7;
+float auraRadius = 30;
+uint16_t auraColor = NEON_CYAN;
+
+// Timeline/probability states
+float timelineConvergence = 0.85;
+int parallelTimelines = 3;
+float fateIndex = 0.72;
+
+// Morphic resonance (Sheldrake fringe theory)
+float morphicField = 0.5;
+int collectiveMemoryHits = 0;
+
+// Dark matter detection (for fun - obviously simulated)
+float darkMatterDensity = 0.23; // 23% of universe mass
+int darkMatterEvents = 0;
+
+// Gravitational wave (LIGO-inspired visualization)
+float gwAmplitude = 0;
+float gwFrequency = 0;
+
+// Neutrino flux (Super-Kamiokande inspired)
+int neutrinoCount = 0;
+float neutrinoEnergy = 0;
+
+// ============= BODY SCANNER / BIOIMPEDANCE (Kyle 2004, Lukaski 1987) =============
+// Based on Bioelectrical Impedance Analysis (BIA) principles
+// Measures body composition via electrical resistance at different frequencies
+// Reference: Kyle et al. 2004 "Bioelectrical impedance analysis" Clinical Nutrition
+// Lukaski 1987 "Methods for the assessment of human body composition"
+
+struct BodyComposition {
+    // Primary measurements (BIA standard - Kushner 1992)
+    float totalBodyWater;     // TBW: 45-65% of body weight (Watson formula)
+    float extracellularWater; // ECW: ~45% of TBW (Hanai mixture theory)
+    float intracellularWater; // ICW: ~55% of TBW
+
+    // Fat analysis (Segal 1988 equations)
+    float bodyFatPercent;     // 10-30% healthy range (ACSM)
+    float visceralFat;        // 1-12 healthy (Tanita scale)
+    float subcutaneousFat;    // Surface fat layer mm
+
+    // Adipocyte (fat cell) fluid analysis
+    // Fat cells are 10-90% lipid, remainder is water + organelles
+    // Reference: Frayn 2010 "Metabolic Regulation"
+    float adipocyteHydration; // Fat cell water content 0-1
+    float lipidDropletSize;   // Avg lipid droplet diameter μm (10-100)
+    float freeGlycerol;       // Lipolysis indicator mmol/L
+
+    // Muscle/Lean mass (Janssen 2000)
+    float leanMass;           // Fat-free mass kg
+    float skeletalMuscle;     // Skeletal muscle mass %
+    float muscleTone;         // Impedance-based tone estimate
+
+    // Cellular health (Cole-Cole model)
+    float cellMembraneCap;    // Cell membrane capacitance pF
+    float phaseAngle;         // Health indicator 4-10° normal (Barbosa-Silva 2005)
+    float bodyCapacitance;    // Overall body capacitance
+
+    // Hydration zones (segmental - Kyle 2004)
+    float armHydration;
+    float legHydration;
+    float torsoHydration;
+
+    bool calibrated;
+};
+BodyComposition bodyScan = {0};
+
+// ============= ECHOLOCATION CALIBRATION (Kolarik 2014) =============
+// Human echolocation studies: Thaler & Goodale 2016
+// WiFi-based distance estimation: Bahl 2000 RADAR system
+// Acoustic model: inverse square law + absorption
+
+struct EchoCalibration {
+    // Reference points (calibrated distances)
+    float refDistance1m;      // RSSI at 1 meter
+    float refDistance3m;      // RSSI at 3 meters
+    float pathLossExp;        // Path loss exponent n (2.0-4.0, Rappaport 2002)
+
+    // Body echo profile
+    float bodyReflectivity;   // How much signal reflects off body
+    float waterAbsorption;    // Higher water = more absorption at 2.4GHz
+    float fatAttenuation;     // Fat tissue signal attenuation dB/cm
+
+    // Fluid detection thresholds
+    float normalHydration;    // Expected signal for normal hydration
+    float dehydratedSig;      // Signal pattern when dehydrated
+    float overhydratedSig;    // Edema detection threshold
+
+    bool calibrated;
+    int calibrationStep;
+    unsigned long calibStart;
+};
+EchoCalibration echoCal = {-45, -55, 2.7, 0.3, 0.8, 0.5, -50, -45, -55, false, 0, 0};
+
+// Scan animation state
+int scanLineY = 0;
+bool scanningBody = false;
+int scanPhase = 0;
+float scanProgress = 0;
+
+// ============= ULTRASOUND-INSPIRED TISSUE ANALYSIS =============
+// Based on acoustic impedance: Z = ρ × c (density × sound speed)
+// Different tissues have different impedances (Szabo 2004)
+// Fat: 1.38 MRayl, Muscle: 1.70 MRayl, Water: 1.48 MRayl
+
+struct TissueLayer {
+    const char* name;
+    float thickness;      // mm
+    float impedance;      // MRayl (Mega Rayls)
+    float fluidContent;   // 0-1
+    uint16_t color;
+};
+
+// Body layers from surface inward
+TissueLayer tissueStack[6] = {
+    {"SKIN", 2.0, 1.60, 0.70, NEON_PINK},
+    {"SUBCUT FAT", 15.0, 1.38, 0.15, NEON_YELLOW},
+    {"FASCIA", 1.0, 1.65, 0.65, NEON_CYAN},
+    {"MUSCLE", 25.0, 1.70, 0.75, NEON_RED},
+    {"DEEP FAT", 8.0, 1.38, 0.12, NEON_ORANGE},
+    {"ORGAN", 20.0, 1.55, 0.80, NEON_PURPLE}
+};
 
 // RTC
 int rtcHour = 21, rtcMin = 50, rtcSec = 0;
@@ -218,20 +440,74 @@ bool pairingMode = false;
 unsigned long pairingStart = 0;
 bool hasNewMessage = false;
 bool isRecording = false;
+bool isPlaying = false;
 unsigned long recordStart = 0;
-#define VOICE_BUF_SIZE 4000
+#define VOICE_BUF_SIZE 8000
+#define VOICE_CHUNK_SIZE 200  // Bytes per LoRa packet (max ~250)
 int16_t voiceBuffer[VOICE_BUF_SIZE];
+int16_t playBuffer[VOICE_BUF_SIZE];
 int voiceLen = 0;
+int playLen = 0;
+int playPos = 0;
 int msgRSSI = 0;
+int voicePacketsReceived = 0;
+int voicePacketsExpected = 0;
 
 // Partner location (from LoRa)
 float partnerLat = 0, partnerLon = 0;
 float partnerDist = 0;
-int partnerBearing = 0;
+float partnerBearing = 0;
 unsigned long lastPartnerUpdate = 0;
+int partnerRSSI = -100;
 
-// My location (simulated GPS)
+// My location (from WiFi triangulation + partner help)
 float myLat = 47.3769, myLon = 8.5417;
+
+// Dual-watch triangulation for finding targets
+struct TriangTarget {
+    uint8_t mac[6];
+    int myRSSI;
+    int partnerRSSI;
+    float myDist;
+    float partnerDist;
+    float estimatedX, estimatedY;  // Relative position
+    bool valid;
+    unsigned long lastSeen;
+};
+#define MAX_TRIANG_TARGETS 8
+TriangTarget triangTargets[MAX_TRIANG_TARGETS];
+int triangTargetCount = 0;
+
+// Partner sensor data (shared via LoRa)
+struct PartnerSensorData {
+    int heartRate;
+    int hrv;
+    int stress;
+    int batteryPct;
+    int nearestEntityRSSI;
+    uint8_t nearestEntityMAC[6];
+    float nearestDist;
+    bool valid;
+};
+PartnerSensorData partnerSensors = {0};
+
+// Voice message queue
+#define MAX_VOICE_MSGS 3
+struct VoiceMessage {
+    int16_t samples[VOICE_BUF_SIZE];
+    int length;
+    int rssi;
+    unsigned long timestamp;
+    bool played;
+};
+VoiceMessage voiceMsgs[MAX_VOICE_MSGS];
+int voiceMsgCount = 0;
+int currentPlayMsg = -1;
+
+// PTT (Push-To-Talk) state
+bool pttPressed = false;
+unsigned long pttStart = 0;
+#define MAX_RECORD_MS 5000  // Max 5 second voice notes
 
 SPIClass loraSPI(HSPI);
 
@@ -253,11 +529,32 @@ uint8_t axpRead(uint8_t reg) {
 void initPMIC() {
     Wire.beginTransmission(AXP2101_ADDR);
     if (Wire.endTransmission() == 0) {
-        axpWrite(AXP2101_ALDO3, 0x1C);
-        uint8_t ldo = axpRead(AXP2101_LDO_EN);
-        axpWrite(AXP2101_LDO_EN, ldo | 0x0F);
-        delay(50);
+        // Set all ALDO voltages to 3.3V (value 28 = 0x1C)
+        axpWrite(0x92, 0x1C);  // ALDO1 - RTC
+        axpWrite(0x93, 0x1C);  // ALDO2 - TFT backlight
+        axpWrite(0x94, 0x1C);  // ALDO3 - Touch screen power
+        axpWrite(0x95, 0x1C);  // ALDO4 - LoRa
+        axpWrite(0x97, 0x1C);  // BLDO2 - Haptic motor
+
+        // Enable: ALDO1(1) + ALDO2(2) + ALDO3(4) + ALDO4(8) + BLDO2(32) = 47
+        axpWrite(0x90, 47);    // LDO ON/OFF control
+        axpWrite(0x80, 1);     // DCDC1 ON for ESP32
+
+        // Enable button IRQ (register 0x40 = IRQ enable 0)
+        axpWrite(0x40, 0x03);  // Enable short press and long press IRQ
+        delay(100);  // Wait for power to stabilize
+        Serial.println("PMIC: All power rails enabled");
     }
+}
+
+// Read button state from AXP2101 PMU
+bool readPMUButton() {
+    uint8_t irqStatus = axpRead(0x49);  // IRQ status register 1
+    if (irqStatus & 0x01) {  // Short press detected
+        axpWrite(0x49, 0x01);  // Clear IRQ
+        return true;
+    }
+    return false;
 }
 
 // ============= RTC =============
@@ -288,69 +585,315 @@ void rtcWrite(int h, int m, int s, int d, int mo, int y) {
     Wire.endTransmission();
 }
 
-// ============= Touch CST816S =============
+// ============= Touch Controller (FT5336 / FT6336 / CST816) =============
+// Auto-detect which touch controller is present
+
+volatile bool touchInterrupt = false;
+uint8_t touchAddr = 0;  // Detected touch controller address
+bool isFocaltech = false;  // True for FT5336/FT6336, false for CST816
+
+void IRAM_ATTR touchISR() {
+    touchInterrupt = true;
+}
+
+// Store I2C addresses found during scan
+uint8_t i2cFound[16];
+int i2cFoundCount = 0;
+
+// FT6336U register addresses (from Adafruit library and datasheet)
+#define FT6336_REG_DEVICE_MODE  0x00
+#define FT6336_REG_GEST_ID      0x01
+#define FT6336_REG_TD_STATUS    0x02
+#define FT6336_REG_THRESHOLD    0x80
+#define FT6336_REG_POINT_RATE   0x88
+#define FT6336_REG_CTRL         0x86
+#define FT6336_REG_G_MODE       0xA4
+#define FT6336_REG_POWER_MODE   0xA5
+#define FT6336_REG_CHIP_ID      0xA3
+#define FT6336_REG_FIRMWARE_ID  0xA6
+#define FT6336_REG_VENDOR_ID    0xA8
+
+// Expected chip IDs
+#define FT6206_CHIP_ID   0x06
+#define FT6236_CHIP_ID   0x36
+#define FT6236U_CHIP_ID  0x64
+#define FT6336U_CHIP_ID  0x64
+#define FOCALTECH_VENDOR_ID 0x11
+
+// Touch data buffer - LilyGO method: read 5 bytes from reg 0x02 (TD_STATUS)
+// This matches the official TTGO_TWatch_Library FocalTech driver
+uint8_t touchData[16];
+
+// FT6336U register addresses for direct reading (aselectroworks library)
+#define FT6336_REG_TD_STATUS   0x02   // Number of touch points
+#define FT6336_REG_P1_XH       0x03   // Touch 1 X high byte + event flag
+#define FT6336_REG_P1_XL       0x04   // Touch 1 X low byte
+#define FT6336_REG_P1_YH       0x05   // Touch 1 Y high byte + touch ID
+#define FT6336_REG_P1_YL       0x06   // Touch 1 Y low byte
+#define FT6336_REG_P1_WEIGHT   0x07   // Touch 1 weight/pressure
+#define FT6336_REG_P1_MISC     0x08   // Touch 1 misc/area
+
+// Helper to write to FT6336U register (with proper timing)
+void ft6336Write(uint8_t reg, uint8_t val) {
+    TouchWire.beginTransmission(FT6336_ADDR);
+    TouchWire.write(reg);
+    TouchWire.write(val);
+    TouchWire.endTransmission();
+    delay(10);  // Critical: FT6336U needs time after write (per aselectroworks lib)
+}
+
+// Helper to read from FT6336U register (with proper timing)
+uint8_t ft6336Read(uint8_t reg) {
+    TouchWire.beginTransmission(FT6336_ADDR);
+    TouchWire.write(reg);
+    TouchWire.endTransmission();  // Full stop, not repeated start
+    delay(10);  // Critical: 10ms delay per aselectroworks library
+    TouchWire.requestFrom((int)FT6336_ADDR, 1);
+    return TouchWire.available() ? TouchWire.read() : 0;
+}
+
+// Read multiple bytes from FT6336U (with proper timing)
+bool ft6336ReadBytes(uint8_t reg, uint8_t* data, uint8_t len) {
+    TouchWire.beginTransmission(FT6336_ADDR);
+    TouchWire.write(reg);
+    TouchWire.endTransmission();  // Full stop
+    delay(10);  // Critical delay
+
+    uint8_t received = TouchWire.requestFrom((int)FT6336_ADDR, (int)len);
+    if (received < len) return false;
+
+    for (uint8_t i = 0; i < len; i++) {
+        data[i] = TouchWire.read();
+    }
+    return true;
+}
+
+// Read touch data - LilyGO method: read 5 bytes from TD_STATUS (0x02)
+// Layout: [TD_STATUS, P1_XH, P1_XL, P1_YH, P1_YL]
+// This is exactly how the official TTGO_TWatch_Library does it
+bool ft6336ReadData() {
+    // Method 1: Read 5 bytes starting at TD_STATUS (0x02) - LilyGO way
+    return ft6336ReadBytes(FT6336_REG_TD_STATUS, touchData, 5);
+}
+
 void initTouch() {
-    pinMode(TOUCH_RST, OUTPUT);
-    pinMode(TOUCH_INT, INPUT);
+    // Initialize separate I2C bus for touch (FT6336U on GPIO39/40)
+    // T-Watch S3 uses a dedicated I2C bus for touch, separate from PMU/RTC
+    TouchWire.begin(TOUCH_SDA, TOUCH_SCL);
+    TouchWire.setClock(100000);  // Start at 100kHz for reliability
 
-    digitalWrite(TOUCH_RST, LOW);
-    delay(10);
-    digitalWrite(TOUCH_RST, HIGH);
-    delay(50);
+    // Set up interrupt pin - FT6336U pulls INT LOW when touch detected
+    pinMode(TOUCH_INT, INPUT_PULLUP);
 
-    // Wake up touch
-    Wire.beginTransmission(CST816_ADDR);
-    Wire.write(0xFE); Wire.write(0xFF);
-    Wire.endTransmission();
+    // CRITICAL: T-Watch S3 has NO touch reset pin connected!
+    // The FT6336U powers up when ALDO3 is enabled by the AXP2101.
+    // We MUST wait sufficient time for the chip to initialize.
+    // Reference: LILYGO wiki - "T-Watch-S3-Plus does not have the touch
+    // reset pin connected, so if touch is set to sleep, it will not work"
+    Serial.println("\n=== TOUCH INIT ===");
+    Serial.println("Waiting 500ms for FT6336U power-up (no reset pin)...");
+    delay(500);  // Longer delay since we can't reset the chip
+
+    Serial.printf("Touch I2C: SDA=%d, SCL=%d, INT=%d\n", TOUCH_SDA, TOUCH_SCL, TOUCH_INT);
+    Serial.printf("INT pin state: %s\n", digitalRead(TOUCH_INT) ? "HIGH (no touch)" : "LOW (touch?)");
+
+    // Scan Touch I2C bus to find touch controller
+    i2cFoundCount = 0;
+    Serial.println("Scanning Touch I2C bus...");
+    for (uint8_t addr = 0x10; addr < 0x78; addr++) {
+        TouchWire.beginTransmission(addr);
+        if (TouchWire.endTransmission() == 0) {
+            if (i2cFoundCount < 16) {
+                i2cFound[i2cFoundCount++] = addr;
+            }
+            Serial.printf("  Found device at 0x%02X\n", addr);
+        }
+    }
+    Serial.printf("Total devices found: %d\n", i2cFoundCount);
+
+    // Check for FT6336U at 0x38
+    TouchWire.beginTransmission(FT6336_ADDR);
+    if (TouchWire.endTransmission() == 0) {
+        touchAddr = FT6336_ADDR;
+        isFocaltech = true;
+        Serial.println("FT6336U found at 0x38!");
+
+        // Read chip info (with proper delays between reads)
+        uint8_t vendorId = ft6336Read(FT6336_REG_VENDOR_ID);
+        uint8_t chipId = ft6336Read(FT6336_REG_CHIP_ID);
+        uint8_t firmwareId = ft6336Read(FT6336_REG_FIRMWARE_ID);
+
+        Serial.printf("  Vendor ID: 0x%02X (expect 0x11 for FocalTech)\n", vendorId);
+        Serial.printf("  Chip ID: 0x%02X (FT6236U/FT6336U=0x64)\n", chipId);
+        Serial.printf("  Firmware: 0x%02X\n", firmwareId);
+
+        // Validate chip (but continue even if unexpected - some clones work fine)
+        if (vendorId != FOCALTECH_VENDOR_ID) {
+            Serial.println("  NOTE: Vendor ID different from expected");
+        }
+        if (chipId != FT6236U_CHIP_ID && chipId != FT6206_CHIP_ID && chipId != FT6236_CHIP_ID) {
+            Serial.printf("  NOTE: Chip ID 0x%02X differs from typical FT6x36\n", chipId);
+        }
+
+        // Configure FT6336U - based on aselectroworks and ESPHome libraries
+        Serial.println("Configuring touch controller...");
+
+        // CRITICAL: Set device to WORKING mode (not factory test mode)
+        // Register 0x00 = 0x00 for working mode
+        ft6336Write(FT6336_REG_DEVICE_MODE, 0x00);
+
+        // Set touch threshold (sensitivity)
+        // Lower = more sensitive. Default ~128. ESPHome uses 22-50.
+        // Too low = ghost touches. Too high = hard to trigger.
+        ft6336Write(FT6336_REG_THRESHOLD, 40);  // More sensitive for T-Watch
+
+        // Set active mode touch rate (0x0E = 14 = ~70Hz updates)
+        ft6336Write(FT6336_REG_POINT_RATE, 14);
+
+        // CTRL register: 0 = keep active always, 1 = auto-sleep
+        // NEVER use auto-sleep since we have no reset pin!
+        ft6336Write(FT6336_REG_CTRL, 0x00);
+
+        // G_MODE (interrupt mode):
+        // 0x00 = polling mode (INT stays low while touched)
+        // 0x01 = trigger mode (INT pulses on touch event)
+        // Use trigger mode for better interrupt handling
+        ft6336Write(FT6336_REG_G_MODE, 0x01);
+
+        // Power mode: 0 = active, 1 = monitor (low power), 3 = hibernate
+        // NEVER use hibernate - no reset pin means we can't wake it!
+        ft6336Write(FT6336_REG_POWER_MODE, 0x00);
+
+        delay(100);  // Let settings take effect
+
+        // Verify configuration was written correctly
+        uint8_t threshold = ft6336Read(FT6336_REG_THRESHOLD);
+        uint8_t gmode = ft6336Read(FT6336_REG_G_MODE);
+        uint8_t pmode = ft6336Read(FT6336_REG_POWER_MODE);
+        uint8_t devmode = ft6336Read(FT6336_REG_DEVICE_MODE);
+        Serial.printf("  Config: DevMode=0x%02X, Threshold=%d, G_MODE=0x%02X, Power=0x%02X\n",
+                      devmode, threshold, gmode, pmode);
+
+        // Test read touch data using LilyGO method (5 bytes from reg 0x02)
+        Serial.println("Testing touch data read...");
+        if (ft6336ReadData()) {
+            uint8_t td_status = touchData[0];
+            uint8_t numPoints = td_status & 0x0F;
+            Serial.printf("  TD_STATUS=0x%02X (touches=%d)\n", td_status, numPoints);
+            if (numPoints > 0 && numPoints <= 2) {
+                int x = ((touchData[1] & 0x0F) << 8) | touchData[2];
+                int y = ((touchData[3] & 0x0F) << 8) | touchData[4];
+                Serial.printf("  Touch detected at: (%d, %d)\n", x, y);
+            } else {
+                Serial.println("  No touch currently detected (good!)");
+            }
+        } else {
+            Serial.println("  WARNING: Test read failed!");
+        }
+
+        // Keep I2C at moderate speed (400kHz can be problematic on long traces)
+        TouchWire.setClock(200000);
+        Serial.println("Touch init complete!");
+
+    } else {
+        Serial.println("ERROR: Touch controller NOT FOUND at 0x38!");
+        Serial.println("Possible causes:");
+        Serial.println("  - ALDO3 not enabled (check PMIC init)");
+        Serial.println("  - Wrong I2C pins (should be SDA=39, SCL=40)");
+        Serial.println("  - Touch flex cable disconnected");
+        touchAddr = 0;
+    }
+
+    // Attach interrupt for touch events (G_MODE=0x01 = trigger mode)
+    if (touchAddr != 0) {
+        attachInterrupt(digitalPinToInterrupt(TOUCH_INT), touchISR, FALLING);
+        Serial.printf("Touch INT attached on GPIO%d\n", TOUCH_INT);
+        Serial.printf("Current INT state: %s\n", digitalRead(TOUCH_INT) ? "HIGH" : "LOW");
+    }
+    Serial.println("=================\n");
 }
 
 void readTouch() {
-    Wire.beginTransmission(CST816_ADDR);
-    Wire.write(0x01);
-    Wire.endTransmission(false);
-    Wire.requestFrom((int)CST816_ADDR, 6);
+    if (touchAddr == 0) return;  // No touch controller
 
-    if (Wire.available() >= 6) {
-        uint8_t gesture = Wire.read();
-        uint8_t points = Wire.read();
-        uint8_t xh = Wire.read();
-        uint8_t xl = Wire.read();
-        uint8_t yh = Wire.read();
-        uint8_t yl = Wire.read();
+    // LilyGO method: Read 5 bytes starting at TD_STATUS (0x02)
+    // This matches TTGO_TWatch_Library FocalTech_Class::getPoint()
+    if (!ft6336ReadData()) return;
 
-        int newX = ((xh & 0x0F) << 8) | xl;
-        int newY = ((yh & 0x0F) << 8) | yl;
+    // Parse touch data from buffer (LilyGO layout from register 0x02)
+    // touchData[0] = TD_STATUS: number of touch points (bits 0-3)
+    // touchData[1] = P1_XH: X high byte (bits 0-3) + event flag (bits 6-7)
+    // touchData[2] = P1_XL: X low byte
+    // touchData[3] = P1_YH: Y high byte (bits 0-3) + touch ID (bits 4-7)
+    // touchData[4] = P1_YL: Y low byte
 
-        bool wasPressed = touchPressed;
-        touchPressed = (points > 0);
+    uint8_t numPoints = touchData[0] & 0x0F;
 
-        if (touchPressed) {
-            if (!wasPressed) {
-                lastTouchX = newX;
-                lastTouchY = newY;
-            }
-            touchX = newX;
-            touchY = newY;
-        } else if (wasPressed) {
-            // Touch released - check swipe
-            int dx = touchX - lastTouchX;
-            int dy = touchY - lastTouchY;
-
-            if (abs(dx) > 50 || abs(dy) > 50) {
-                swipeDetected = true;
-                if (abs(dx) > abs(dy)) {
-                    swipeDir = (dx > 0) ? 1 : -1;  // Right / Left
-                } else {
-                    swipeDir = (dy > 0) ? 2 : -2;  // Down / Up
+    // Validate - if 0 or > 2 touch points reported, it's noise or no touch
+    if (numPoints == 0 || numPoints > 2) {
+        // Also check if interrupt pin is still HIGH (no touch)
+        if (digitalRead(TOUCH_INT) == HIGH) {
+            // Confirm no touch
+            bool wasPressed = touchPressed;
+            touchPressed = false;
+            if (wasPressed) {
+                // Touch was just released - check for swipe
+                int dx = touchX - lastTouchX;
+                int dy = touchY - lastTouchY;
+                if (abs(dx) > 50 || abs(dy) > 50) {
+                    swipeDetected = true;
+                    if (abs(dx) > abs(dy)) {
+                        swipeDir = (dx > 0) ? 1 : -1;
+                    } else {
+                        swipeDir = (dy > 0) ? 2 : -2;
+                    }
                 }
             }
+            return;
         }
+        // INT is low but TD_STATUS says 0 - re-read once more
+        numPoints = 0;
+    }
 
-        // Gesture detection from chip
-        if (gesture == 0x01) { swipeDetected = true; swipeDir = -1; }  // Swipe left
-        if (gesture == 0x02) { swipeDetected = true; swipeDir = 1; }   // Swipe right
-        if (gesture == 0x03) { swipeDetected = true; swipeDir = -2; }  // Swipe up
-        if (gesture == 0x04) { swipeDetected = true; swipeDir = 2; }   // Swipe down
+    int newX = 0, newY = 0;
+    if (numPoints > 0) {
+        // Extract coordinates for first touch point (LilyGO way)
+        // X = (buffer[1] & 0x0F) << 8 | buffer[2]
+        // Y = (buffer[3] & 0x0F) << 8 | buffer[4]
+        newX = ((touchData[1] & 0x0F) << 8) | touchData[2];
+        newY = ((touchData[3] & 0x0F) << 8) | touchData[4];
+
+        // Validate coordinates are within display range (240x240)
+        if (newX > 240 || newY > 240) {
+            // Invalid coordinates, ignore this reading
+            return;
+        }
+    }
+
+    bool wasPressed = touchPressed;
+    touchPressed = (numPoints > 0);
+
+    if (touchPressed) {
+        if (!wasPressed) {
+            // New touch started
+            lastTouchX = newX;
+            lastTouchY = newY;
+        }
+        touchX = newX;
+        touchY = newY;
+    } else if (wasPressed) {
+        // Touch released - check for swipe gesture
+        int dx = touchX - lastTouchX;
+        int dy = touchY - lastTouchY;
+
+        if (abs(dx) > 50 || abs(dy) > 50) {
+            swipeDetected = true;
+            if (abs(dx) > abs(dy)) {
+                swipeDir = (dx > 0) ? 1 : -1;  // Right / Left
+            } else {
+                swipeDir = (dy > 0) ? 2 : -2;  // Down / Up
+            }
+        }
     }
 }
 
@@ -418,9 +961,9 @@ void fbGlitch(int intensity) {
     }
 }
 
-// Scanline effect
+// Scanline effect - only on header area (top 20 pixels)
 void fbScanlines() {
-    for (int y = (frame * 2) % 4; y < 240; y += 4) {
+    for (int y = (frame * 2) % 4; y < 20; y += 4) {  // Only top 20 pixels
         for (int x = 0; x < 240; x++) {
             uint16_t c = fb[y * 240 + x];
             fb[y * 240 + x] = ((c >> 1) & 0x7BEF);
@@ -581,7 +1124,7 @@ void pushFramebuffer() {
 }
 
 void initDisplay() {
-    pinMode(TFT_BL, OUTPUT); digitalWrite(TFT_BL, HIGH);
+    pinMode(TFT_BL, OUTPUT); digitalWrite(TFT_BL, HIGH);  // Backlight ON
     pinMode(TFT_CS, OUTPUT); pinMode(TFT_DC, OUTPUT);
     digitalWrite(TFT_CS, HIGH);
     SPI.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
@@ -677,8 +1220,14 @@ int loraReceive(uint8_t* data, int maxLen) {
 #define MSG_PAIR_ACK    0x02
 #define MSG_PING        0x03
 #define MSG_PONG        0x04
-#define MSG_VOICE       0x05
-#define MSG_LOCATION    0x06
+#define MSG_VOICE_START 0x05  // Voice transmission start
+#define MSG_VOICE_DATA  0x06  // Voice data chunk
+#define MSG_VOICE_END   0x07  // Voice transmission end
+#define MSG_LOCATION    0x08
+#define MSG_SENSORS     0x09  // Share sensor readings
+#define MSG_TRIANG_REQ  0x0A  // Request partner's RSSI for MAC
+#define MSG_TRIANG_RSP  0x0B  // Response with RSSI data
+#define MSG_HEARTBEAT   0x0C  // Keep-alive with basic status
 
 void sendPairRequest() {
     uint8_t pkt[16];
@@ -697,6 +1246,165 @@ void sendLocation() {
     loraSend(pkt, 13);
 }
 
+// Send heartbeat with status every few seconds
+void sendHeartbeat() {
+    if (!loraPaired) return;
+    uint8_t pkt[16];
+    pkt[0] = MSG_HEARTBEAT;
+    memcpy(pkt + 1, &pairID, 4);
+    pkt[5] = (uint8_t)heartRate;
+    pkt[6] = (uint8_t)hrv;
+    pkt[7] = (uint8_t)stress;
+    pkt[8] = 85;  // Battery % placeholder
+    loraSend(pkt, 9);
+}
+
+// Send sensor data including nearest entity for triangulation
+void sendSensorData() {
+    if (!loraPaired) return;
+    uint8_t pkt[32];
+    pkt[0] = MSG_SENSORS;
+    memcpy(pkt + 1, &pairID, 4);
+    pkt[5] = (uint8_t)heartRate;
+    pkt[6] = (uint8_t)hrv;
+    pkt[7] = (uint8_t)stress;
+    pkt[8] = 85;  // Battery
+    // Include nearest entity info for triangulation
+    if (entityCount > 0) {
+        memcpy(pkt + 9, entities[0].mac, 6);
+        pkt[15] = (uint8_t)(-entities[0].rssi);  // Send as positive
+        float dist = entities[0].distanceM;
+        memcpy(pkt + 16, &dist, 4);
+        loraSend(pkt, 20);
+    } else {
+        loraSend(pkt, 9);
+    }
+}
+
+// Request partner to report RSSI for a specific MAC (triangulation)
+void sendTriangRequest(uint8_t* targetMAC) {
+    if (!loraPaired) return;
+    uint8_t pkt[16];
+    pkt[0] = MSG_TRIANG_REQ;
+    memcpy(pkt + 1, &pairID, 4);
+    memcpy(pkt + 5, targetMAC, 6);
+    loraSend(pkt, 11);
+}
+
+// Respond with our RSSI reading for requested MAC
+void sendTriangResponse(uint8_t* targetMAC, int rssi, float dist) {
+    if (!loraPaired) return;
+    uint8_t pkt[20];
+    pkt[0] = MSG_TRIANG_RSP;
+    memcpy(pkt + 1, &pairID, 4);
+    memcpy(pkt + 5, targetMAC, 6);
+    pkt[11] = (uint8_t)(-rssi);
+    memcpy(pkt + 12, &dist, 4);
+    loraSend(pkt, 16);
+}
+
+// Voice transmission functions
+void sendVoiceStart(int totalSamples) {
+    if (!loraPaired) return;
+    uint8_t pkt[12];
+    pkt[0] = MSG_VOICE_START;
+    memcpy(pkt + 1, &pairID, 4);
+    int16_t samples = (int16_t)totalSamples;
+    memcpy(pkt + 5, &samples, 2);
+    int16_t chunks = (totalSamples * 2 + VOICE_CHUNK_SIZE - 1) / VOICE_CHUNK_SIZE;
+    memcpy(pkt + 7, &chunks, 2);
+    loraSend(pkt, 9);
+}
+
+void sendVoiceChunk(int chunkNum, uint8_t* data, int len) {
+    if (!loraPaired) return;
+    uint8_t pkt[VOICE_CHUNK_SIZE + 8];
+    pkt[0] = MSG_VOICE_DATA;
+    memcpy(pkt + 1, &pairID, 4);
+    pkt[5] = (uint8_t)(chunkNum >> 8);
+    pkt[6] = (uint8_t)(chunkNum & 0xFF);
+    pkt[7] = (uint8_t)len;
+    memcpy(pkt + 8, data, len);
+    loraSend(pkt, 8 + len);
+}
+
+void sendVoiceEnd() {
+    if (!loraPaired) return;
+    uint8_t pkt[8];
+    pkt[0] = MSG_VOICE_END;
+    memcpy(pkt + 1, &pairID, 4);
+    loraSend(pkt, 5);
+}
+
+// Transmit recorded voice over LoRa (compressed)
+void transmitVoice() {
+    if (voiceLen == 0) return;
+
+    // Downsample and compress: keep every 4th sample, convert to 8-bit
+    int compLen = voiceLen / 4;
+    uint8_t* compressed = (uint8_t*)malloc(compLen);
+    if (!compressed) return;
+
+    for (int i = 0; i < compLen; i++) {
+        int16_t sample = voiceBuffer[i * 4];
+        compressed[i] = (uint8_t)((sample >> 8) + 128);  // Convert to unsigned 8-bit
+    }
+
+    sendVoiceStart(compLen);
+    delay(100);
+
+    int chunks = (compLen + VOICE_CHUNK_SIZE - 1) / VOICE_CHUNK_SIZE;
+    for (int c = 0; c < chunks; c++) {
+        int offset = c * VOICE_CHUNK_SIZE;
+        int len = min(VOICE_CHUNK_SIZE, compLen - offset);
+        sendVoiceChunk(c, compressed + offset, len);
+        delay(80);  // Allow LoRa to process
+    }
+
+    sendVoiceEnd();
+    free(compressed);
+}
+
+// Temporary buffer for receiving voice data
+uint8_t voiceRxBuffer[VOICE_BUF_SIZE];
+int voiceRxLen = 0;
+int voiceRxExpected = 0;
+bool voiceRxInProgress = false;
+
+// Triangulation: calculate position using two distance measurements
+// Uses circle intersection algorithm
+void triangulateTarget(TriangTarget* t) {
+    if (t->myDist <= 0 || t->partnerDist <= 0 || partnerDist <= 0) {
+        t->valid = false;
+        return;
+    }
+
+    // We're at origin (0,0), partner is at (partnerDist, 0)
+    // Target is at intersection of two circles
+    float d = partnerDist;  // Distance between us and partner
+    float r1 = t->myDist;   // Our distance to target
+    float r2 = t->partnerDist;  // Partner's distance to target
+
+    // Check if triangulation is possible
+    if (d > r1 + r2 || d < fabs(r1 - r2)) {
+        t->valid = false;
+        return;
+    }
+
+    // Calculate intersection point (there are 2, we pick the one closer to midpoint)
+    float a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+    float h = sqrt(r1 * r1 - a * a);
+
+    // Two possible positions
+    float x1 = a, y1 = h;
+    float x2 = a, y2 = -h;
+
+    // Pick the one that makes more sense (usually positive y = in front)
+    t->estimatedX = x1;
+    t->estimatedY = (y1 > 0) ? y1 : y2;
+    t->valid = true;
+}
+
 void processLoRa() {
     uint8_t buf[256];
     int len = loraReceive(buf, 256);
@@ -704,6 +1412,7 @@ void processLoRa() {
         uint8_t type = buf[0];
         uint32_t fromID;
         memcpy(&fromID, buf + 1, 4);
+        partnerRSSI = msgRSSI;  // Store RSSI of last partner message
 
         switch (type) {
             case MSG_PAIR_REQ:
@@ -716,6 +1425,7 @@ void processLoRa() {
                     pairingMode = false;
                 }
                 break;
+
             case MSG_PAIR_ACK:
                 if (pairingMode) {
                     partnerID = fromID;
@@ -723,21 +1433,166 @@ void processLoRa() {
                     pairingMode = false;
                 }
                 break;
+
             case MSG_LOCATION:
                 if (loraPaired && fromID == partnerID) {
                     memcpy(&partnerLat, buf + 5, 4);
                     memcpy(&partnerLon, buf + 9, 4);
                     lastPartnerUpdate = millis();
-                    // Calculate distance
+                    // Calculate distance using RSSI + GPS hybrid
                     float dlat = (partnerLat - myLat) * 111000;
                     float dlon = (partnerLon - myLon) * 111000 * cos(myLat * DEG_TO_RAD);
-                    partnerDist = sqrt(dlat * dlat + dlon * dlon);
+                    float gpsDist = sqrt(dlat * dlat + dlon * dlon);
+                    float rssiDist = rssiToDistance(partnerRSSI);
+                    // Weighted average: trust RSSI more at close range
+                    partnerDist = (gpsDist < 100) ? (rssiDist * 0.7 + gpsDist * 0.3) : gpsDist;
                     partnerBearing = atan2(dlon, dlat) * RAD_TO_DEG;
                 }
                 break;
-            case MSG_VOICE:
+
+            case MSG_HEARTBEAT:
                 if (loraPaired && fromID == partnerID) {
+                    partnerSensors.heartRate = buf[5];
+                    partnerSensors.hrv = buf[6];
+                    partnerSensors.stress = buf[7];
+                    partnerSensors.batteryPct = buf[8];
+                    partnerSensors.valid = true;
+                    lastPartnerUpdate = millis();
+                }
+                break;
+
+            case MSG_SENSORS:
+                if (loraPaired && fromID == partnerID) {
+                    partnerSensors.heartRate = buf[5];
+                    partnerSensors.hrv = buf[6];
+                    partnerSensors.stress = buf[7];
+                    partnerSensors.batteryPct = buf[8];
+                    partnerSensors.valid = true;
+                    lastPartnerUpdate = millis();
+
+                    // If includes entity data for triangulation
+                    if (len >= 20) {
+                        memcpy(partnerSensors.nearestEntityMAC, buf + 9, 6);
+                        partnerSensors.nearestEntityRSSI = -(int)buf[15];
+                        memcpy(&partnerSensors.nearestDist, buf + 16, 4);
+
+                        // Check if we also see this entity
+                        for (int i = 0; i < entityCount; i++) {
+                            if (memcmp(entities[i].mac, partnerSensors.nearestEntityMAC, 6) == 0) {
+                                // Found same entity! Add to triangulation targets
+                                bool found = false;
+                                for (int t = 0; t < triangTargetCount; t++) {
+                                    if (memcmp(triangTargets[t].mac, entities[i].mac, 6) == 0) {
+                                        triangTargets[t].myRSSI = entities[i].rssi;
+                                        triangTargets[t].partnerRSSI = partnerSensors.nearestEntityRSSI;
+                                        triangTargets[t].myDist = entities[i].distanceM;
+                                        triangTargets[t].partnerDist = partnerSensors.nearestDist;
+                                        triangTargets[t].lastSeen = millis();
+                                        triangulateTarget(&triangTargets[t]);
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found && triangTargetCount < MAX_TRIANG_TARGETS) {
+                                    TriangTarget* t = &triangTargets[triangTargetCount++];
+                                    memcpy(t->mac, entities[i].mac, 6);
+                                    t->myRSSI = entities[i].rssi;
+                                    t->partnerRSSI = partnerSensors.nearestEntityRSSI;
+                                    t->myDist = entities[i].distanceM;
+                                    t->partnerDist = partnerSensors.nearestDist;
+                                    t->lastSeen = millis();
+                                    triangulateTarget(t);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                break;
+
+            case MSG_TRIANG_REQ:
+                if (loraPaired && fromID == partnerID) {
+                    // Partner wants our RSSI for a specific MAC
+                    uint8_t targetMAC[6];
+                    memcpy(targetMAC, buf + 5, 6);
+                    for (int i = 0; i < entityCount; i++) {
+                        if (memcmp(entities[i].mac, targetMAC, 6) == 0) {
+                            sendTriangResponse(targetMAC, entities[i].rssi, entities[i].distanceM);
+                            break;
+                        }
+                    }
+                }
+                break;
+
+            case MSG_TRIANG_RSP:
+                if (loraPaired && fromID == partnerID) {
+                    uint8_t targetMAC[6];
+                    memcpy(targetMAC, buf + 5, 6);
+                    int rssi = -(int)buf[11];
+                    float dist;
+                    memcpy(&dist, buf + 12, 4);
+
+                    // Update triangulation target
+                    for (int t = 0; t < triangTargetCount; t++) {
+                        if (memcmp(triangTargets[t].mac, targetMAC, 6) == 0) {
+                            triangTargets[t].partnerRSSI = rssi;
+                            triangTargets[t].partnerDist = dist;
+                            triangTargets[t].lastSeen = millis();
+                            triangulateTarget(&triangTargets[t]);
+                            break;
+                        }
+                    }
+                }
+                break;
+
+            case MSG_VOICE_START:
+                if (loraPaired && fromID == partnerID) {
+                    int16_t samples;
+                    memcpy(&samples, buf + 5, 2);
+                    voiceRxExpected = samples;
+                    voiceRxLen = 0;
+                    voiceRxInProgress = true;
                     hasNewMessage = true;
+                }
+                break;
+
+            case MSG_VOICE_DATA:
+                if (loraPaired && fromID == partnerID && voiceRxInProgress) {
+                    int chunkNum = (buf[5] << 8) | buf[6];
+                    int chunkLen = buf[7];
+                    int offset = chunkNum * VOICE_CHUNK_SIZE;
+                    if (offset + chunkLen <= VOICE_BUF_SIZE) {
+                        memcpy(voiceRxBuffer + offset, buf + 8, chunkLen);
+                        voiceRxLen = max(voiceRxLen, offset + chunkLen);
+                    }
+                }
+                break;
+
+            case MSG_VOICE_END:
+                if (loraPaired && fromID == partnerID && voiceRxInProgress) {
+                    voiceRxInProgress = false;
+                    // Decompress: expand 8-bit to 16-bit, upsample 4x
+                    playLen = 0;
+                    for (int i = 0; i < voiceRxLen && playLen < VOICE_BUF_SIZE; i++) {
+                        int16_t sample = ((int16_t)voiceRxBuffer[i] - 128) << 8;
+                        // Upsample 4x with simple interpolation
+                        for (int j = 0; j < 4 && playLen < VOICE_BUF_SIZE; j++) {
+                            playBuffer[playLen++] = sample;
+                        }
+                    }
+                    playPos = 0;
+                    hasNewMessage = true;
+                    voicePacketsReceived++;
+
+                    // Store in message queue
+                    if (voiceMsgCount < MAX_VOICE_MSGS) {
+                        VoiceMessage* msg = &voiceMsgs[voiceMsgCount++];
+                        memcpy(msg->samples, playBuffer, playLen * 2);
+                        msg->length = playLen;
+                        msg->rssi = partnerRSSI;
+                        msg->timestamp = millis();
+                        msg->played = false;
+                    }
                 }
                 break;
         }
@@ -816,7 +1671,7 @@ void IRAM_ATTR snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
         entities[idx].rssi = rssi;
         entities[idx].distanceM = rssiToDistance(rssi);
         entities[idx].lastSeen = millis();
-        float angle = (mac[0] + mac[5]) * 0.1;
+        float angle = (mac[0] + mac[5]) * 0.1 + PI;  // +PI to flip radar to correct orientation
         float r = constrain(entities[idx].distanceM * 8, 10, 90);
         entities[idx].x = 120 + cos(angle) * r;
         entities[idx].y = 120 + sin(angle) * r;
@@ -996,212 +1851,372 @@ void face_Clock() {
 
     // Subtle background pulse rings
     for (int i = 0; i < 2; i++) {
-        int r = 60 + ((frame + i * 40) % 60);
-        fbCircle(120, 75, r, GRID_DIM);
+        int r = 50 + ((frame + i * 30) % 50);
+        fbCircle(120, 70, r, GRID_DIM);
     }
 
     char buf[32];
 
-    // BIG TIME - shimmer effect on heading
+    // TIME - size 4 fits perfectly, shimmer on heading only
     sprintf(buf, "%02d:%02d", rtcHour, rtcMin);
-    fbTextCenterBold(25, buf, WHITE, 5);  // Size 5 = huge, white for max visibility
-    fbShimmer(25, 45);  // Shimmer on time only
+    fbTextCenterBold(20, buf, WHITE, 4);
+    fbShimmer(20, 40);  // Shimmer on time only
 
-    // Date directly under time - clear readable
+    // Date under time
     const char* months[] = {"JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"};
     sprintf(buf, "%02d %s 20%02d", rtcDay, months[rtcMonth-1], rtcYear);
-    fbTextCenterBold(85, buf, NEON_CYAN, 2);
+    fbTextCenter(70, buf, NEON_CYAN, 2);
 
-    // Seconds with pulse
+    // Seconds
     sprintf(buf, ":%02d", rtcSec);
-    fbTextCenterBold(115, buf, (rtcSec % 2) ? NEON_PINK : NEON_PURPLE, 2);
+    fbTextCenter(100, buf, (rtcSec % 2) ? NEON_PINK : NEON_PURPLE, 2);
 
-    // Status bar with glow
-    fbLine(0, 145, 240, 145, NEON_CYAN);
-    fbLine(0, 146, 240, 146, NEON_PURPLE);
+    // Status bar
+    fbLine(0, 125, 240, 125, NEON_CYAN);
 
-    // Big readable stats with bold outline
+    // Stats row - fits on screen
     sprintf(buf, "%d", heartRate);
-    fbTextBold(20, 155, buf, NEON_RED, 3);
-    fbTextBold(80, 175, "BPM", WHITE, 1);
+    fbTextBold(15, 135, buf, NEON_RED, 3);
+    fbText(70, 150, "BPM", WHITE, 1);
 
-    // Nearest = wearer at ~0.6m from heart (arm length calibration)
-    // Count excludes self (entities > WEARER_OFFSET_M)
+    // Nearby count (excludes self)
     int nearbyCount = 0;
     for (int i = 0; i < entityCount; i++) {
         if (entities[i].distanceM > WEARER_OFFSET_M) nearbyCount++;
     }
     sprintf(buf, "%d", nearbyCount);
-    fbTextBold(140, 155, buf, NEON_GREEN, 3);
-    fbTextBold(195, 175, "NEAR", WHITE, 1);
+    fbTextBold(130, 135, buf, NEON_GREEN, 3);
+    fbText(180, 150, "NEAR", WHITE, 1);
 
-    // Wearer indicator
-    fbTextBold(20, 200, "YOU", NEON_PINK, 1);
-    sprintf(buf, "%.1fM", WEARER_OFFSET_M);
-    fbTextBold(55, 200, buf, NEON_CYAN, 1);
+    // Bottom info
+    fbLine(0, 175, 240, 175, NEON_PURPLE);
+    fbText(10, 185, "YOU: 0.6M", NEON_PINK, 1);
 
-    // Pair status with label
     if (loraPaired) {
-        fbFillCircle(210, 210, 12, NEON_GREEN);
-        fbTextBold(185, 225, "LINKED", NEON_GREEN, 1);
+        fbFillCircle(210, 195, 8, NEON_GREEN);
+        fbText(170, 210, "LINKED", NEON_GREEN, 1);
     } else {
-        fbCircle(210, 210, 12, DIM_GREEN);
+        fbCircle(210, 195, 8, DIM_GREEN);
+        fbText(165, 210, "UNPAIRED", DIM_GREEN, 1);
     }
+
+    sprintf(buf, "%d TOTAL", entityCount);
+    fbText(10, 210, buf, NEON_CYAN, 1);
     fbScanlines();
 }
 
 void face_WalkieTalkie() {
     fbClear(BLACK);
-    fbTextCenter(5, "WALKIE TALKIE", NEON_ORANGE, 2);
-    char buf[32];
+    char buf[40];
 
     if (!loraPaired) {
-        if (pairingMode) {
-            int r = 30 + (frame % 40);
-            fbCircle(120, 100, r, NEON_ORANGE);
-            fbCircle(120, 100, r - 15, DIM_CYAN);
-            fbTextCenter(90, "SEARCHING", NEON_ORANGE, 2);
-            fbTextCenter(120, "HOLD 2S TO PAIR", DIM_CYAN, 1);
-            if (millis() - pairingStart > 30000) pairingMode = false;
-        } else {
-            fbTextCenter(80, "NOT PAIRED", NEON_RED, 2);
-            fbTextCenter(120, "HOLD BUTTON 2S", DIM_CYAN, 1);
-            fbTextCenter(140, "TO START PAIRING", DIM_CYAN, 1);
+        // Auto-pairing mode - always searching
+        fbTextCenter(5, "WALKIE TALKIE", NEON_ORANGE, 2);
+
+        // Animated radar sweep while searching
+        int sweep = (frame * 3) % 360;
+        for (int r = 20; r < 80; r += 20) {
+            fbCircle(120, 110, r, DIM_CYAN);
         }
-        sprintf(buf, "ID: %08X", pairID);
-        fbTextCenter(180, buf, DIM_GREEN, 1);
+        // Sweep line
+        float ang = sweep * DEG_TO_RAD;
+        int ex = 120 + cos(ang) * 70;
+        int ey = 110 + sin(ang) * 70;
+        fbLine(120, 110, ex, ey, NEON_GREEN);
+
+        // Pulsing search indicator
+        int pulse = (frame % 30) < 15 ? NEON_ORANGE : DIM_CYAN;
+        fbTextCenter(50, "SEARCHING...", pulse, 2);
+        fbTextCenter(180, "AUTO-PAIRING", NEON_CYAN, 1);
+
+        sprintf(buf, "MY ID: %08X", pairID);
+        fbTextCenter(200, buf, DIM_GREEN, 1);
+
+        // Send pair request periodically
+        if (frame % 60 == 0) {
+            sendPairRequest();
+        }
     } else {
-        fbFillCircle(120, 60, 20, NEON_GREEN);
-        fbTextCenter(55, "OK", BLACK, 2);
-        sprintf(buf, "%08X", partnerID);
-        fbTextCenter(100, buf, NEON_CYAN, 1);
+        // PAIRED - Full walkie-talkie interface
+        fbTextCenter(2, "LINKED", NEON_GREEN, 2);
 
-        // Partner location
-        if (lastPartnerUpdate > 0) {
-            sprintf(buf, "DIST: %.0fM", partnerDist);
-            fbTextCenter(130, buf, NEON_GREEN, 1);
-            sprintf(buf, "BEARING: %d", partnerBearing);
-            fbTextCenter(150, buf, DIM_CYAN, 1);
+        // Partner status bar
+        sprintf(buf, "PARTNER: %08X", partnerID);
+        fbText(5, 22, buf, DIM_CYAN, 1);
+
+        // Partner vitals (received via LoRa)
+        if (partnerSensors.valid) {
+            sprintf(buf, "HR:%d HRV:%d", partnerSensors.heartRate, partnerSensors.hrv);
+            fbText(5, 34, buf, NEON_GREEN, 1);
+            sprintf(buf, "BAT:%d%%", partnerSensors.batteryPct);
+            fbText(170, 34, buf, partnerSensors.batteryPct > 20 ? NEON_GREEN : NEON_RED, 1);
         }
 
-        if (hasNewMessage) {
-            int pulse = sin(frame * 0.3) * 10 + 25;
-            fbFillCircle(120, 200, pulse, NEON_ORANGE);
-            fbTextCenter(195, "MSG", BLACK, 1);
+        // Distance and bearing compass
+        fbLine(0, 48, 240, 48, DIM_CYAN);
+
+        // Mini compass showing partner direction
+        int cx = 60, cy = 90;
+        fbCircle(cx, cy, 35, DIM_CYAN);
+        fbCircle(cx, cy, 36, DIM_CYAN);
+        float bRad = partnerBearing * DEG_TO_RAD;
+        int px = cx + cos(bRad - PI/2) * 30;
+        int py = cy + sin(bRad - PI/2) * 30;
+        fbFillCircle(px, py, 6, NEON_GREEN);
+        fbText(cx - 4, cy - 4, "N", WHITE, 1);
+
+        // Distance display
+        sprintf(buf, "%.1fm", partnerDist);
+        fbText(110, 70, buf, NEON_CYAN, 2);
+        sprintf(buf, "%d dBm", partnerRSSI);
+        fbText(110, 95, buf, partnerRSSI > -70 ? NEON_GREEN : NEON_YELLOW, 1);
+
+        // Signal strength bars
+        int bars = (partnerRSSI > -50) ? 5 : (partnerRSSI > -60) ? 4 : (partnerRSSI > -70) ? 3 : (partnerRSSI > -80) ? 2 : 1;
+        for (int i = 0; i < 5; i++) {
+            int bh = 5 + i * 4;
+            uint16_t col = (i < bars) ? NEON_GREEN : GRID_DIM;
+            for (int y = 0; y < bh; y++) fbLine(200 + i * 8, 100 - y, 205 + i * 8, 100 - y, col);
+        }
+
+        fbLine(0, 115, 240, 115, DIM_CYAN);
+
+        // PTT (Push-To-Talk) button area
+        if (isRecording) {
+            // Recording animation
+            int pulse = 25 + sin(frame * 0.3) * 10;
+            fbFillCircle(120, 160, pulse, NEON_RED);
+            fbTextCenter(155, "REC", BLACK, 2);
+            int elapsed = (millis() - recordStart) / 1000;
+            sprintf(buf, "%ds / 5s", elapsed);
+            fbTextCenter(195, buf, NEON_ORANGE, 1);
+        } else if (hasNewMessage) {
+            // New message indicator
+            int pulse = 30 + sin(frame * 0.2) * 8;
+            fbFillCircle(120, 160, pulse, NEON_ORANGE);
+            fbTextCenter(155, "NEW", BLACK, 2);
+            fbTextCenter(195, "TAP TO PLAY", NEON_CYAN, 1);
+        } else {
+            // Ready state
+            fbCircle(120, 160, 30, NEON_GREEN);
+            fbCircle(120, 160, 28, NEON_GREEN);
+            fbTextCenter(155, "PTT", NEON_GREEN, 2);
+            fbTextCenter(195, "HOLD TO TALK", DIM_CYAN, 1);
+        }
+
+        // Voice message count
+        sprintf(buf, "MSGS:%d", voiceMsgCount);
+        fbText(5, 220, buf, voiceMsgCount > 0 ? NEON_ORANGE : DIM_CYAN, 1);
+
+        // Triangulated targets indicator
+        if (triangTargetCount > 0) {
+            sprintf(buf, "TRI:%d", triangTargetCount);
+            fbText(180, 220, buf, NEON_PURPLE, 1);
         }
     }
-    fbGlitch(2);
+
+    // Always send sensor data when paired
+    if (loraPaired && frame % 120 == 0) {
+        sendSensorData();
+    }
+}
+
+// Dual-watch triangulation face - find targets through walls
+void face_Triangulation() {
+    fbClear(BLACK);
+    fbTextCenter(2, "TRIANGULATION", NEON_PURPLE, 2);
+    char buf[40];
+
+    if (!loraPaired) {
+        fbTextCenter(100, "NEED PARTNER", NEON_RED, 2);
+        fbTextCenter(130, "Pair another watch", DIM_CYAN, 1);
+        fbTextCenter(150, "to triangulate", DIM_CYAN, 1);
+        return;
+    }
+
+    // Draw coordinate system with us at center, partner to the right
+    int cx = 120, cy = 130;
+    int scale = 3;  // pixels per meter
+
+    // Grid lines
+    for (int x = 20; x < 220; x += 40) fbLine(x, 50, x, 210, GRID_DIM);
+    for (int y = 50; y < 210; y += 40) fbLine(20, y, 220, y, GRID_DIM);
+
+    // Us (blue circle at center)
+    fbFillCircle(cx, cy, 8, NEON_CYAN);
+    fbText(cx - 8, cy + 12, "YOU", NEON_CYAN, 1);
+
+    // Partner (green circle)
+    int partnerX = cx + min(80, (int)(partnerDist * scale));
+    fbFillCircle(partnerX, cy, 8, NEON_GREEN);
+    fbText(partnerX - 12, cy + 12, "PAIR", NEON_GREEN, 1);
+
+    // Draw line between us and partner
+    fbLine(cx, cy, partnerX, cy, DIM_GREEN);
+
+    // Status bar
+    sprintf(buf, "DIST:%.1fm RSSI:%ddB", partnerDist, partnerRSSI);
+    fbText(5, 22, buf, NEON_GREEN, 1);
+
+    // Draw triangulated targets
+    int targetsDrawn = 0;
+    for (int i = 0; i < triangTargetCount && targetsDrawn < 5; i++) {
+        TriangTarget* t = &triangTargets[i];
+        if (!t->valid || millis() - t->lastSeen > 10000) continue;
+
+        // Scale position to screen coordinates
+        int tx = cx + (int)(t->estimatedX * scale);
+        int ty = cy - (int)(t->estimatedY * scale);  // Y inverted
+
+        // Clamp to screen
+        tx = max(25, min(215, tx));
+        ty = max(55, min(205, ty));
+
+        // Draw target as red triangle
+        fbFillCircle(tx, ty, 6, NEON_RED);
+
+        // Draw distance circles from both watchers
+        int r1 = (int)(t->myDist * scale);
+        int r2 = (int)(t->partnerDist * scale);
+        if (r1 < 100) fbCircle(cx, cy, r1, DIM_CYAN);
+        if (r2 < 100) fbCircle(partnerX, cy, r2, DIM_GREEN);
+
+        // Target info
+        sprintf(buf, "%02X:%02X", t->mac[4], t->mac[5]);
+        fbText(tx - 12, ty - 12, buf, NEON_ORANGE, 1);
+
+        targetsDrawn++;
+    }
+
+    // Legend
+    sprintf(buf, "TARGETS: %d", triangTargetCount);
+    fbText(5, 215, buf, NEON_ORANGE, 1);
+
+    // Instructions
+    if (triangTargetCount == 0) {
+        fbTextCenter(180, "Walk around to", DIM_CYAN, 1);
+        fbTextCenter(195, "triangulate targets", DIM_CYAN, 1);
+    }
+
+    // Request triangulation data periodically
+    if (frame % 90 == 0 && entityCount > 0) {
+        sendTriangRequest(entities[0].mac);
+    }
 }
 
 void face_Vitals() {
     fbClear(BLACK);
 
-    // Heading with shimmer
-    fbTextCenterBold(3, "VITALS", NEON_CYAN, 2);
-    fbShimmer(3, 20);
+    // Heading with shimmer only
+    fbTextCenter(3, "VITALS", NEON_CYAN, 2);
+    fbShimmer(3, 18);
 
     // Animated heart
-    float pulse = sin(frame * 0.15) * 0.2 + 1.0;
-    fbFillCircle(52, 50, 12 * pulse, NEON_RED);
-    fbFillCircle(70, 50, 12 * pulse, NEON_RED);
+    float pulse = sin(frame * 0.15) * 0.15 + 1.0;
+    fbFillCircle(40, 40, 10 * pulse, NEON_RED);
+    fbFillCircle(55, 40, 10 * pulse, NEON_RED);
 
-    // Heart rate - BIG and readable
+    // Heart rate - size 3 fits
     heartRate = 68 + sin(frame * 0.1) * 4;
     char buf[32];
     sprintf(buf, "%d", heartRate);
-    fbTextBold(25, 70, buf, WHITE, 4);  // Huge white number
-    fbTextBold(110, 85, "BPM", NEON_RED, 2);
+    fbTextBold(20, 55, buf, WHITE, 3);
+    fbText(75, 65, "BPM", NEON_RED, 1);
 
-    // HRV with scientific reference
+    // HRV
     hrv = 38 + sin(frame * 0.08) * 8;
-    sprintf(buf, "HRV: %dMS", hrv);
-    fbTextBold(140, 50, buf, NEON_GREEN, 1);
-    fbTextBold(140, 62, "RMSSD", DIM_CYAN, 1);  // Scientific term
+    sprintf(buf, "HRV:%dMS", hrv);
+    fbText(130, 40, buf, NEON_GREEN, 1);
+    fbText(130, 52, "RMSSD", DIM_CYAN, 1);
 
-    // ECG wave - thicker for visibility
+    // ECG wave
     for (int x = 10; x < 230; x++) {
         int phase = (x + frame * 3) % 70;
-        int y = 120;
-        if (phase > 20 && phase < 25) y = 120 - (phase - 20) * 12;
-        else if (phase >= 25 && phase < 30) y = 60 + (phase - 25) * 16;
+        int y = 100;
+        if (phase > 20 && phase < 25) y = 100 - (phase - 20) * 10;
+        else if (phase >= 25 && phase < 30) y = 50 + (phase - 25) * 14;
         fbPixel(x, y, NEON_GREEN);
         fbPixel(x, y + 1, NEON_GREEN);
     }
 
-    // Stress with bar
+    // Stress bar
     stress = 30 + sin(frame * 0.05) * 15;
-    sprintf(buf, "STRESS: %d%%", (int)stress);
-    fbTextBold(10, 145, buf, WHITE, 2);
-    fbRect(10, 170, (int)(stress * 2.2), 12, stress < 50 ? NEON_GREEN : NEON_RED);
-    fbRect(10, 170, 220, 12, GRID_DIM);  // Outline
+    sprintf(buf, "STRESS %d%%", (int)stress);
+    fbText(10, 120, buf, WHITE, 1);
+    fbRect(10, 135, (int)(stress * 2), 8, stress < 50 ? NEON_GREEN : NEON_RED);
+    fbRect(10, 135, 200, 8, GRID_DIM);
 
-    // Distance from heart (arm calibration)
-    fbLine(0, 190, 240, 190, NEON_PURPLE);
-    float nearestFromHeart = nearestEntityM < 50 ? nearestEntityM + (ARM_LENGTH_CM / 100.0) : 0;
-    sprintf(buf, "%.1fM FROM HEART", nearestFromHeart);
-    fbTextBold(10, 200, buf, NEON_CYAN, 2);
+    // SpO2
+    int spo2 = 97 + sin(frame * 0.07) * 1;
+    sprintf(buf, "SPO2: %d%%", spo2);
+    fbText(10, 155, buf, NEON_CYAN, 1);
 
-    // Scientific note
-    fbText(10, 225, "REF: SHAFFER 2017", DIM_CYAN, 1);
+    // Breath rate
+    sprintf(buf, "BREATH: %d/MIN", breathRate);
+    fbText(120, 155, buf, NEON_GREEN, 1);
+
+    fbLine(0, 175, 240, 175, NEON_PURPLE);
+
+    // Nearest from heart
+    float nearestFromHeart = nearestEntityM < 50 ? nearestEntityM + 0.6 : 0;
+    sprintf(buf, "NEAREST: %.1fM", nearestFromHeart);
+    fbText(10, 185, buf, NEON_CYAN, 2);
+
+    fbText(10, 215, "REF: SHAFFER 2017", DIM_CYAN, 1);
+    fbText(140, 215, "PORGES 2011", DIM_CYAN, 1);
     fbScanlines();
 }
 
 void face_Radar() {
     fbClear(BLACK);
 
-    // Heading with shimmer
+    // Heading with shimmer only
     const char* title = droneCount > 0 ? "DRONE ALERT" : "RADAR";
     uint16_t titleCol = droneCount > 0 ? NEON_RED : NEON_CYAN;
-    fbTextCenterBold(3, title, titleCol, 2);
-    fbShimmer(3, 20);
+    fbTextCenter(3, title, titleCol, 2);
+    fbShimmer(3, 18);
 
-    int cx = 120, cy = 110;
+    int cx = 120, cy = 105;
 
-    // Radar rings with labels
-    for (int r = 25; r <= 75; r += 25) {
+    // Radar rings
+    for (int r = 25; r <= 70; r += 22) {
         fbCircle(cx, cy, r, GRID_DIM);
     }
-    fbLine(cx - 80, cy, cx + 80, cy, GRID_DIM);
-    fbLine(cx, cy - 80, cx, cy + 80, GRID_DIM);
+    fbLine(cx - 75, cy, cx + 75, cy, GRID_DIM);
+    fbLine(cx, cy - 75, cx, cy + 75, GRID_DIM);
 
-    // Range labels
-    fbText(cx + 27, cy - 5, "5M", DIM_CYAN, 1);
-    fbText(cx + 52, cy - 5, "10M", DIM_CYAN, 1);
-    fbText(cx + 77, cy - 5, "15M", DIM_CYAN, 1);
-
-    // Sweep with trail
+    // Sweep
     float sweep = frame * 0.08;
-    for (int i = 0; i < 15; i++) {
+    for (int i = 0; i < 12; i++) {
         float a = sweep - i * 0.04;
-        uint16_t col = (200 - i * 12) >> 3 << 6;
-        fbLine(cx, cy, cx + cos(a) * 75, cy + sin(a) * 75, col);
+        uint16_t col = (180 - i * 14) >> 3 << 6;
+        fbLine(cx, cy, cx + cos(a) * 70, cy + sin(a) * 70, col);
     }
 
-    // Entities with distance labels
+    // Entities
     for (int i = 0; i < entityCount; i++) {
         if (millis() - entities[i].lastSeen > 30000) continue;
-        int ex = entities[i].x, ey = entities[i].y;
+        int ex = entities[i].x, ey = entities[i].y - 15;
         float p = sin(frame * 0.2 + i) * 2;
         if (entities[i].isDrone) {
-            fbFillCircle(ex, ey, 7 + p, NEON_RED);
-            fbLine(ex - 10, ey - 10, ex + 10, ey + 10, NEON_RED);
+            fbFillCircle(ex, ey, 5 + p, NEON_RED);
         } else {
-            fbFillCircle(ex, ey, 5 + p, NEON_GREEN);
+            fbFillCircle(ex, ey, 4 + p, NEON_GREEN);
         }
     }
 
     // You in center
-    fbFillCircle(cx, cy, 6, NEON_PINK);
-    fbText(cx - 4, cy - 3, "U", BLACK, 1);
+    fbFillCircle(cx, cy, 5, NEON_PINK);
 
-    // Stats - big and clear
+    // Stats - fits on screen
+    fbLine(0, 185, 240, 185, NEON_CYAN);
     char buf[32];
     sprintf(buf, "%d", entityCount);
-    fbTextBold(20, 200, buf, WHITE, 4);
-    fbTextBold(80, 215, "ENTITIES", NEON_GREEN, 1);
+    fbTextBold(15, 195, buf, WHITE, 3);
+    fbText(65, 205, "ENTITIES", NEON_GREEN, 1);
 
     sprintf(buf, "%d DRONES", droneCount);
-    fbTextBold(140, 205, buf, droneCount > 0 ? NEON_RED : DIM_GREEN, 2);
+    fbText(130, 200, buf, droneCount > 0 ? NEON_RED : DIM_GREEN, 1);
     fbScanlines();
 }
 
@@ -1740,7 +2755,7 @@ void face_About() {
     fbTextCenter(60, "HYPERLOG", NEON_PURPLE, 2);
     fbTextCenter(85, "BIOELECTRIC", NEON_CYAN, 2);
     fbTextCenter(110, "NEURAL OCEAN", NEON_GREEN, 2);
-    fbTextCenter(140, "V14.0", NEON_PINK, 2);
+    fbTextCenter(140, "V15.0", NEON_PINK, 2);
 
     const char* feat[] = {"TRIBE FINDER", "HEALTH MAP", "RUBBLE RESCUE", "ECHOLOCATION", "BIOML"};
     fbTextCenter(165, feat[(frame / 45) % 5], NEON_ORANGE, 1);
@@ -2036,26 +3051,2176 @@ void face_Radiation() {
     fbScanlines();
 }
 
+// ============= NEW FACE 19: BODY SCANNER =============
+// Bioimpedance Analysis visualization (Kyle 2004, Lukaski 1987)
+void face_BodyScanner() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "BODY SCAN", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+
+    // Simulate BIA measurements from wearer's baseline
+    if (!bodyScan.calibrated) {
+        // Initialize with typical values (Watson formula)
+        bodyScan.totalBodyWater = 55.0 + sin(frame * 0.01) * 2;
+        bodyScan.extracellularWater = bodyScan.totalBodyWater * 0.45;
+        bodyScan.intracellularWater = bodyScan.totalBodyWater * 0.55;
+        bodyScan.bodyFatPercent = 18.0 + sin(frame * 0.02) * 3;
+        bodyScan.visceralFat = 6.0 + sin(frame * 0.015) * 2;
+        bodyScan.adipocyteHydration = 0.15 + sin(frame * 0.03) * 0.05;
+        bodyScan.lipidDropletSize = 45.0 + sin(frame * 0.025) * 15;
+        bodyScan.phaseAngle = 6.5 + sin(frame * 0.02) * 1.5;
+        bodyScan.leanMass = 58.0;
+        bodyScan.skeletalMuscle = 42.0;
+    }
+
+    // Body outline with scanning line
+    int bx = 120, by = 130;
+
+    // Draw body silhouette
+    fbFillCircle(bx, by - 55, 18, DIM_CYAN);  // Head
+    fbRect(bx - 25, by - 35, 50, 60, DIM_CYAN);  // Torso
+    fbRect(bx - 40, by - 30, 15, 45, DIM_CYAN);  // Left arm
+    fbRect(bx + 25, by - 30, 15, 45, DIM_CYAN);  // Right arm
+    fbRect(bx - 20, by + 25, 15, 50, DIM_CYAN);  // Left leg
+    fbRect(bx + 5, by + 25, 15, 50, DIM_CYAN);  // Right leg
+
+    // Animated scan line
+    scanLineY = (frame * 3) % 140;
+    int scanY = by - 70 + scanLineY;
+    fbLine(bx - 50, scanY, bx + 50, scanY, NEON_GREEN);
+    fbLine(bx - 50, scanY + 1, bx + 50, scanY + 1, NEON_CYAN);
+
+    // Tissue layer visualization (left side)
+    int layerY = 25;
+    for (int i = 0; i < 6; i++) {
+        int barW = tissueStack[i].fluidContent * 30;
+        fbRect(5, layerY, barW, 8, tissueStack[i].color);
+        fbText(40, layerY, tissueStack[i].name, tissueStack[i].color, 1);
+        layerY += 12;
+    }
+
+    // Stats on right side
+    sprintf(buf, "TBW:%.0f%%", bodyScan.totalBodyWater);
+    fbText(160, 25, buf, NEON_CYAN, 1);
+
+    sprintf(buf, "FAT:%.0f%%", bodyScan.bodyFatPercent);
+    fbText(160, 38, buf, NEON_YELLOW, 1);
+
+    sprintf(buf, "VISC:%d", (int)bodyScan.visceralFat);
+    fbText(160, 51, buf, NEON_ORANGE, 1);
+
+    sprintf(buf, "PHI:%.1f", bodyScan.phaseAngle);
+    fbText(160, 64, buf, NEON_GREEN, 1);
+
+    // Fat cell fluid analysis (bottom section)
+    fbLine(0, 195, 240, 195, NEON_PURPLE);
+    fbText(5, 200, "ADIPOCYTE FLUID", NEON_PINK, 1);
+
+    // Fat cell visualization
+    for (int i = 0; i < 5; i++) {
+        int cx = 30 + i * 45;
+        int cy = 220;
+        int r = 8 + sin(frame * 0.1 + i) * 2;
+
+        // Cell membrane
+        fbCircle(cx, cy, r, NEON_YELLOW);
+
+        // Lipid droplet (yellow center)
+        int lipidR = r * (1.0 - bodyScan.adipocyteHydration);
+        fbFillCircle(cx, cy, lipidR, NEON_ORANGE);
+
+        // Water content (blue ring)
+        if (bodyScan.adipocyteHydration > 0.1) {
+            fbCircle(cx, cy, r - 2, NEON_CYAN);
+        }
+    }
+
+    sprintf(buf, "H2O:%.0f%%", bodyScan.adipocyteHydration * 100);
+    fbText(5, 215, buf, NEON_CYAN, 1);
+
+    sprintf(buf, "DROP:%duM", (int)bodyScan.lipidDropletSize);
+    fbText(160, 215, buf, NEON_YELLOW, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// ============= NEW FACE 20: SONAR EMULATION =============
+// WiFi Time-of-Flight based distance mapping (Ma 2019, Bahl 2000)
+void face_Sonar() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "SONAR", NEON_GREEN, 2);
+    fbShimmer(2, 18);
+
+    int cx = 120, cy = 130;
+
+    // Update sonar sweep
+    sonarSweepAngle += 0.08;
+    if (sonarSweepAngle > 2 * PI) sonarSweepAngle -= 2 * PI;
+
+    // Draw sonar display (submarine style)
+    // Range rings
+    for (int r = 20; r <= 80; r += 20) {
+        fbCircle(cx, cy, r, GRID_DIM);
+    }
+
+    // Cross hairs
+    fbLine(cx - 85, cy, cx + 85, cy, GRID_DIM);
+    fbLine(cx, cy - 85, cx, cy + 85, GRID_DIM);
+
+    // Diagonal lines
+    for (int a = 0; a < 8; a++) {
+        float ang = a * PI / 4;
+        fbLine(cx, cy, cx + cos(ang) * 80, cy + sin(ang) * 80, GRID_DIM);
+    }
+
+    // Sweep line with fade trail
+    for (int trail = 0; trail < 20; trail++) {
+        float trailAngle = sonarSweepAngle - trail * 0.05;
+        int alpha = 255 - trail * 12;
+        uint16_t trailColor = (alpha > 128) ? NEON_GREEN : DIM_GREEN;
+        int ex = cx + cos(trailAngle) * 80;
+        int ey = cy + sin(trailAngle) * 80;
+        fbLine(cx, cy, ex, ey, trailColor);
+    }
+
+    // Map entities to sonar
+    sonarTargetCount = 0;
+    sonarNearestM = 99.9;
+
+    for (int i = 0; i < entityCount; i++) {
+        if (millis() - entities[i].lastSeen > 5000) continue;
+
+        float entAngle = atan2(entities[i].y - cy, entities[i].x - cx);
+        float entDist = entities[i].distanceM;
+
+        // Check if in current sweep sector (just passed)
+        float angleDiff = sonarSweepAngle - entAngle;
+        while (angleDiff < 0) angleDiff += 2 * PI;
+        while (angleDiff > 2 * PI) angleDiff -= 2 * PI;
+
+        if (angleDiff < 1.0) {  // Recently swept
+            // Draw ping blip
+            float r = min(75.0f, entDist * 8);
+            int px = cx + cos(entAngle) * r;
+            int py = cy + sin(entAngle) * r;
+
+            // Pulse effect
+            float pulse = 1.0 - angleDiff;
+            int blipR = 3 + pulse * 4;
+
+            uint16_t blipCol = entities[i].isDrone ? NEON_RED : NEON_CYAN;
+            fbFillCircle(px, py, blipR, blipCol);
+
+            sonarTargetCount++;
+            if (entDist < sonarNearestM) sonarNearestM = entDist;
+        }
+    }
+
+    // Sonar stats
+    fbText(5, 22, "PING ACTIVE", NEON_GREEN, 1);
+
+    sprintf(buf, "TARGETS:%d", sonarTargetCount);
+    fbText(5, 210, buf, NEON_CYAN, 1);
+
+    sprintf(buf, "NEAR:%.1fM", sonarNearestM < 99 ? sonarNearestM : 0);
+    fbText(120, 210, buf, NEON_GREEN, 1);
+
+    // Depth/range indicator
+    sprintf(buf, "RNG:%dM", SONAR_RANGE_M);
+    fbText(180, 22, buf, NEON_PURPLE, 1);
+
+    // Ping waveform at bottom
+    fbLine(0, 225, 240, 225, NEON_GREEN);
+    for (int x = 0; x < 240; x++) {
+        int pingPhase = (x + frame * 4) % 60;
+        int h = (pingPhase < 10) ? (10 - pingPhase) : 0;
+        if (h > 0) fbRect(x, 230 - h, 1, h, NEON_GREEN);
+    }
+
+    fbScanlines();
+}
+
+// ============= NEW FACE 21: QUANTUM DETECTOR =============
+// Quantum-inspired superposition probability (Nielsen & Chuang 2010)
+void face_Quantum() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "QUANTUM", NEON_PURPLE, 2);
+    fbShimmer(2, 18);
+
+    // Update quantum state from entity detection
+    quantumIterations++;
+
+    // Initialize qubits in superposition
+    for (int q = 0; q < 8; q++) {
+        if (!qubits[q].collapsed) {
+            // Superposition: equal probability of |0⟩ and |1⟩
+            qubits[q].alpha = 0.707 + sin(frame * 0.1 + q) * 0.1;
+            qubits[q].beta = sqrt(1.0 - qubits[q].alpha * qubits[q].alpha);
+            qubits[q].phase = (frame * 0.05 + q * 0.3);
+        }
+    }
+
+    // Measure qubits based on entity presence
+    int humanQubits = 0;
+    int maxQubits = (entityCount < 8) ? entityCount : 8;
+    for (int i = 0; i < maxQubits; i++) {
+        if (millis() - entities[i].lastSeen > 5000) continue;
+        if (!entities[i].isDrone) {
+            // "Collapse" qubit to |1⟩ (human detected)
+            qubits[i].collapsed = true;
+            qubits[i].result = 1;
+            humanQubits++;
+        }
+    }
+
+    // Calculate quantum coherence (decoherence from environment)
+    quantumCoherence = 1.0 - (entityCount * 0.05);
+    quantumCoherence = max(0.1f, quantumCoherence);
+
+    // Entanglement strength (correlations between qubits)
+    entanglementStrength = (humanQubits > 1) ? 0.8 : 0.2;
+
+    // Draw quantum register visualization
+    int qy = 35;
+    fbText(5, qy, "QUBITS |", NEON_CYAN, 1);
+
+    for (int q = 0; q < 8; q++) {
+        int qx = 70 + q * 20;
+
+        // Bloch sphere mini representation
+        int blobR = 8;
+        fbCircle(qx, qy + 20, blobR, NEON_PURPLE);
+
+        if (qubits[q].collapsed) {
+            // Collapsed state
+            uint16_t col = (qubits[q].result == 1) ? NEON_GREEN : NEON_RED;
+            fbFillCircle(qx, qy + 20, 5, col);
+            fbText(qx - 3, qy + 35, qubits[q].result ? "1" : "0", col, 1);
+        } else {
+            // Superposition - spinning indicator
+            float px = cos(qubits[q].phase) * 5;
+            float py = sin(qubits[q].phase) * 5;
+            fbFillCircle(qx + px, qy + 20 + py, 3, NEON_CYAN);
+            fbText(qx - 3, qy + 35, "?", NEON_PURPLE, 1);
+        }
+    }
+
+    // Probability amplitudes
+    fbText(5, 80, "AMPLITUDES:", NEON_PINK, 1);
+    sprintf(buf, "|0>:%.2f |1>:%.2f", qubits[0].alpha, qubits[0].beta);
+    fbText(5, 95, buf, NEON_CYAN, 1);
+
+    // Wave function visualization
+    fbText(5, 115, "PSI WAVE:", NEON_GREEN, 1);
+    for (int x = 0; x < 220; x++) {
+        float psi = sin(x * 0.1 + frame * 0.1) * cos(x * 0.05 - frame * 0.05);
+        psi *= quantumCoherence;
+        int y = 145 + psi * 20;
+        uint16_t col = (psi > 0) ? NEON_CYAN : NEON_PURPLE;
+        fbPixel(x + 10, y, col);
+        fbPixel(x + 10, y + 1, col);
+    }
+
+    // Stats
+    fbLine(0, 170, 240, 170, NEON_PURPLE);
+
+    sprintf(buf, "COHERENCE:%.0f%%", quantumCoherence * 100);
+    fbText(5, 175, buf, NEON_CYAN, 1);
+
+    sprintf(buf, "ENTANGLE:%.0f%%", entanglementStrength * 100);
+    fbText(5, 190, buf, NEON_PINK, 1);
+
+    sprintf(buf, "HUMANS:|%d>", humanQubits);
+    fbText(130, 175, buf, NEON_GREEN, 1);
+
+    sprintf(buf, "ITER:%d", quantumIterations);
+    fbText(130, 190, buf, NEON_PURPLE, 1);
+
+    // Quantum uncertainty principle reminder
+    fbText(5, 210, "DX*DP>=H/4PI", NEON_YELLOW, 1);
+    fbText(5, 225, "HEISENBERG 1927", DIM_CYAN, 1);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 22: TERNARY LOGIC =============
+// Three-valued logic detection (Lukasiewicz 1920, Kleene 1938)
+void face_Ternary() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "TERNARY", NEON_YELLOW, 2);
+    fbShimmer(2, 18);
+
+    // Update ternary states from entities
+    ternaryTrue = 0;
+    ternaryFalse = 0;
+    ternaryUnknown = 0;
+
+    for (int i = 0; i < entityCount && i < MAX_ENTITIES; i++) {
+        if (millis() - entities[i].lastSeen > 10000) {
+            ternaryDetect[i].humanPresent = 0;  // Unknown
+            ternaryDetect[i].confidence = 0;
+        } else {
+            float sim = signalSimilarity(&entities[i]);
+
+            // Three-valued logic assignment
+            if (sim > 0.7) {
+                ternaryDetect[i].humanPresent = 1;   // True
+                ternaryDetect[i].threatLevel = -1;   // Safe
+                ternaryTrue++;
+            } else if (sim < 0.3 || entities[i].isDrone) {
+                ternaryDetect[i].humanPresent = -1;  // False (not human)
+                ternaryDetect[i].threatLevel = 1;    // Threat
+                ternaryFalse++;
+            } else {
+                ternaryDetect[i].humanPresent = 0;   // Unknown
+                ternaryDetect[i].threatLevel = 0;    // Unknown
+                ternaryUnknown++;
+            }
+
+            ternaryDetect[i].confidence = sim;
+        }
+    }
+
+    // Ternary truth table visualization
+    fbText(5, 25, "LOGIC STATE:", NEON_CYAN, 1);
+
+    // Draw truth values
+    int ty = 45;
+    fbText(5, ty, "TRUE(+1)", NEON_GREEN, 1);
+    sprintf(buf, "%d", ternaryTrue);
+    fbText(100, ty, buf, NEON_GREEN, 2);
+
+    ty += 25;
+    fbText(5, ty, "FALSE(-1)", NEON_RED, 1);
+    sprintf(buf, "%d", ternaryFalse);
+    fbText(100, ty, buf, NEON_RED, 2);
+
+    ty += 25;
+    fbText(5, ty, "UNKNOWN(0)", NEON_YELLOW, 1);
+    sprintf(buf, "%d", ternaryUnknown);
+    fbText(100, ty, buf, NEON_YELLOW, 2);
+
+    // Ternary bar visualization
+    int barY = 125;
+    int totalTern = ternaryTrue + ternaryFalse + ternaryUnknown;
+    if (totalTern > 0) {
+        int trueW = (ternaryTrue * 220) / totalTern;
+        int falseW = (ternaryFalse * 220) / totalTern;
+        int unkW = 220 - trueW - falseW;
+
+        fbRect(10, barY, trueW, 15, NEON_GREEN);
+        fbRect(10 + trueW, barY, falseW, 15, NEON_RED);
+        fbRect(10 + trueW + falseW, barY, unkW, 15, NEON_YELLOW);
+    }
+
+    // Kleene logic operators
+    fbText(5, 150, "KLEENE OPS:", NEON_PURPLE, 1);
+    fbText(5, 165, "AND: MIN(A,B)", NEON_CYAN, 1);
+    fbText(5, 180, "OR: MAX(A,B)", NEON_CYAN, 1);
+    fbText(5, 195, "NOT: -A", NEON_CYAN, 1);
+
+    // Entity confidence list
+    fbLine(120, 145, 120, 235, NEON_PURPLE);
+    fbText(125, 150, "ENTITIES:", NEON_PINK, 1);
+
+    int ey = 165;
+    int maxTern = (entityCount < 4) ? entityCount : 4;
+    for (int i = 0; i < maxTern; i++) {
+        TernaryState* ts = &ternaryDetect[i];
+        const char* state = (ts->humanPresent == 1) ? "+1" :
+                           (ts->humanPresent == -1) ? "-1" : " 0";
+        uint16_t col = (ts->humanPresent == 1) ? NEON_GREEN :
+                       (ts->humanPresent == -1) ? NEON_RED : NEON_YELLOW;
+
+        sprintf(buf, "%s:%.0f%%", state, ts->confidence * 100);
+        fbText(125, ey, buf, col, 1);
+        ey += 15;
+    }
+
+    // Reference
+    fbText(5, 225, "LUKASIEWICZ 1920", DIM_CYAN, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// ============= NEW FACE 23: NEURAL NET CLASSIFIER =============
+// TinyML entity classification (Rosenblatt 1958, Warden 2019)
+void face_NeuralNet() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "NEURAL NET", NEON_PINK, 2);
+    fbShimmer(2, 18);
+
+    // Initialize NN weights if needed
+    if (!nnTrained) {
+        for (int i = 0; i < NN_INPUTS; i++) {
+            for (int h = 0; h < NN_HIDDEN; h++) {
+                nnWeights1[i][h] = (random(100) - 50) / 100.0;
+            }
+        }
+        for (int h = 0; h < NN_HIDDEN; h++) {
+            for (int o = 0; o < NN_OUTPUTS; o++) {
+                nnWeights2[h][o] = (random(100) - 50) / 100.0;
+            }
+            nnBias1[h] = (random(100) - 50) / 100.0;
+        }
+        for (int o = 0; o < NN_OUTPUTS; o++) {
+            nnBias2[o] = (random(100) - 50) / 100.0;
+        }
+        nnTrained = true;
+    }
+
+    // Run inference on nearest entity
+    float inputs[NN_INPUTS] = {0};
+    if (entityCount > 0) {
+        Entity* e = &entities[0];
+        inputs[0] = (e->rssi + 100) / 100.0;        // Normalize RSSI
+        inputs[1] = e->distanceM / 20.0;            // Normalize distance
+        inputs[2] = e->isDrone ? 1.0 : 0.0;
+        inputs[3] = e->predHR / 100.0;
+        inputs[4] = e->bioSimilarity;
+        inputs[5] = (e->mac[0] + e->mac[5]) / 512.0;
+    }
+
+    // Forward pass - hidden layer
+    float hidden[NN_HIDDEN];
+    for (int h = 0; h < NN_HIDDEN; h++) {
+        hidden[h] = nnBias1[h];
+        for (int i = 0; i < NN_INPUTS; i++) {
+            hidden[h] += inputs[i] * nnWeights1[i][h];
+        }
+        // ReLU activation
+        hidden[h] = max(0.0f, hidden[h]);
+    }
+
+    // Output layer
+    float maxOut = -999;
+    int maxIdx = 0;
+    for (int o = 0; o < NN_OUTPUTS; o++) {
+        nnOutput[o] = nnBias2[o];
+        for (int h = 0; h < NN_HIDDEN; h++) {
+            nnOutput[o] += hidden[h] * nnWeights2[h][o];
+        }
+        // Softmax prep
+        if (nnOutput[o] > maxOut) {
+            maxOut = nnOutput[o];
+            maxIdx = o;
+        }
+    }
+
+    // Draw network visualization
+    int netY = 70;
+
+    // Input layer
+    fbText(5, 25, "INPUTS", NEON_CYAN, 1);
+    for (int i = 0; i < NN_INPUTS; i++) {
+        int ix = 20, iy = 45 + i * 18;
+        int brightness = inputs[i] * 255;
+        uint16_t col = (brightness > 128) ? NEON_GREEN : DIM_GREEN;
+        fbFillCircle(ix, iy, 6, col);
+
+        // Connection lines to hidden
+        for (int h = 0; h < NN_HIDDEN; h++) {
+            int hx = 100, hy = 60 + h * 30;
+            if (abs(nnWeights1[i][h]) > 0.3) {
+                fbLine(ix + 6, iy, hx - 6, hy, GRID_DIM);
+            }
+        }
+    }
+
+    // Hidden layer
+    fbText(80, 25, "HIDDEN", NEON_PURPLE, 1);
+    for (int h = 0; h < NN_HIDDEN; h++) {
+        int hx = 100, hy = 60 + h * 30;
+        uint16_t col = (hidden[h] > 0.5) ? NEON_PURPLE : DIM_RED;
+        fbFillCircle(hx, hy, 8, col);
+
+        // Connection to output
+        for (int o = 0; o < NN_OUTPUTS; o++) {
+            int ox = 180, oy = 70 + o * 35;
+            if (abs(nnWeights2[h][o]) > 0.3) {
+                fbLine(hx + 8, hy, ox - 8, oy, GRID_DIM);
+            }
+        }
+    }
+
+    // Output layer
+    fbText(160, 25, "OUTPUT", NEON_PINK, 1);
+    const char* classes[] = {"HUMAN", "DRONE", "UNKNWN"};
+    for (int o = 0; o < NN_OUTPUTS; o++) {
+        int ox = 180, oy = 70 + o * 35;
+        uint16_t col = (o == maxIdx) ? NEON_GREEN : DIM_CYAN;
+        fbFillCircle(ox, oy, 10, col);
+        fbText(ox + 15, oy - 4, classes[o], col, 1);
+    }
+
+    // Classification result
+    fbLine(0, 175, 240, 175, NEON_PINK);
+
+    fbText(5, 180, "CLASSIFY:", NEON_CYAN, 1);
+    fbText(80, 180, classes[maxIdx], NEON_GREEN, 2);
+
+    sprintf(buf, "CONF:%.0f%%", (maxOut + 1) * 50);
+    fbText(5, 200, buf, NEON_PURPLE, 1);
+
+    sprintf(buf, "ENTITIES:%d", entityCount);
+    fbText(120, 200, buf, NEON_CYAN, 1);
+
+    // Reference
+    fbText(5, 225, "ROSENBLATT 1958", DIM_CYAN, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// ============= NEW FACE 24: BRAINWAVE EEG =============
+// EEG band visualization (Berger 1929)
+void face_Brainwave() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "BRAINWAVE", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+
+    // Simulate brainwave states from HRV/stress
+    float relaxation = 1.0 - (stress / 100.0);
+    alphaWave = 0.3 + relaxation * 0.5 + sin(frame * 0.05) * 0.1;
+    betaWave = 0.2 + (stress / 100.0) * 0.4 + cos(frame * 0.07) * 0.1;
+    thetaWave = 0.1 + sin(frame * 0.03) * 0.15;
+    deltaWave = (sleepScore > 80) ? 0.4 : 0.1;
+    gammaWave = 0.1 + sin(frame * 0.1) * 0.1;
+
+    // Wave displays
+    struct WaveBand { const char* name; float* val; float freq; uint16_t col; };
+    WaveBand bands[] = {
+        {"DELTA 0.5-4Hz", &deltaWave, 2, NEON_PURPLE},
+        {"THETA 4-8Hz", &thetaWave, 6, NEON_PINK},
+        {"ALPHA 8-13Hz", &alphaWave, 10, NEON_GREEN},
+        {"BETA 14-30Hz", &betaWave, 22, NEON_CYAN},
+        {"GAMMA 30+Hz", &gammaWave, 40, NEON_YELLOW}
+    };
+
+    int waveY = 30;
+    for (int b = 0; b < 5; b++) {
+        fbText(5, waveY, bands[b].name, bands[b].col, 1);
+
+        // Draw wave
+        for (int x = 0; x < 100; x++) {
+            float phase = x * 0.1 * (bands[b].freq / 10.0) + frame * 0.1;
+            int y = waveY + 12 + sin(phase) * (*bands[b].val) * 10;
+            fbPixel(130 + x, y, bands[b].col);
+        }
+
+        // Power bar
+        int barW = (*bands[b].val) * 80;
+        fbRect(130, waveY + 22, barW, 4, bands[b].col);
+
+        waveY += 38;
+    }
+
+    // Brain state interpretation
+    fbLine(0, 210, 240, 210, NEON_CYAN);
+
+    const char* state = "ALERT";
+    uint16_t stateCol = NEON_CYAN;
+    if (alphaWave > 0.6) { state = "RELAXED"; stateCol = NEON_GREEN; }
+    else if (betaWave > 0.5) { state = "FOCUSED"; stateCol = NEON_YELLOW; }
+    else if (thetaWave > 0.4) { state = "DROWSY"; stateCol = NEON_PURPLE; }
+    else if (deltaWave > 0.5) { state = "DEEP SLEEP"; stateCol = NEON_PINK; }
+
+    fbText(5, 215, "STATE:", NEON_CYAN, 1);
+    fbText(60, 215, state, stateCol, 2);
+
+    fbText(5, 230, "BERGER 1929", DIM_CYAN, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// ============= NEW FACE 25: CHAKRA ENERGY =============
+// Biofield visualization (fringe but spectacular)
+void face_Chakra() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "CHAKRA", NEON_PURPLE, 2);
+    fbShimmer(2, 18);
+
+    // Update chakra energies based on biometrics
+    chakraEnergy[0] = 0.5 + (100 - stress) / 200.0;  // Root - stability
+    chakraEnergy[1] = 0.5 + sin(frame * 0.02) * 0.2;  // Sacral - creativity
+    chakraEnergy[2] = 0.5 + (heartRate - 60) / 80.0;  // Solar - power
+    chakraEnergy[3] = 0.6 + hrv / 150.0;              // Heart - love
+    chakraEnergy[4] = 0.5 + breathRate / 40.0;        // Throat - expression
+    chakraEnergy[5] = 0.5 + cos(frame * 0.03) * 0.2;  // Third eye - intuition
+    chakraEnergy[6] = 0.5 + sleepScore / 200.0;       // Crown - consciousness
+
+    // Draw body silhouette with chakra points
+    int bx = 80, by = 130;
+
+    // Simple body outline
+    fbCircle(bx, by - 70, 15, DIM_CYAN);  // Head
+    fbLine(bx, by - 55, bx, by + 20, DIM_CYAN);  // Spine
+    fbLine(bx - 25, by - 40, bx + 25, by - 40, DIM_CYAN);  // Shoulders
+    fbLine(bx, by + 20, bx - 15, by + 60, DIM_CYAN);  // Left leg
+    fbLine(bx, by + 20, bx + 15, by + 60, DIM_CYAN);  // Right leg
+
+    // Chakra points along spine
+    int chakraY[] = {190, 170, 150, 130, 110, 75, 55};
+
+    for (int c = 0; c < 7; c++) {
+        float energy = chakraEnergy[c];
+        int r = 8 + energy * 8 + sin(frame * 0.1 + c) * 3;
+
+        // Glow effect
+        for (int gr = r + 5; gr > r; gr--) {
+            fbCircle(bx, chakraY[c], gr, chakraColors[c]);
+        }
+        fbFillCircle(bx, chakraY[c], r, chakraColors[c]);
+
+        // Energy rays
+        if (energy > 0.7) {
+            for (int ray = 0; ray < 4; ray++) {
+                float angle = ray * PI / 2 + frame * 0.05;
+                int rx = bx + cos(angle) * (r + 10);
+                int ry = chakraY[c] + sin(angle) * (r + 10);
+                fbLine(bx, chakraY[c], rx, ry, chakraColors[c]);
+            }
+        }
+    }
+
+    // Energy levels on right
+    int ey = 30;
+    for (int c = 6; c >= 0; c--) {
+        fbText(130, ey, chakraNames[c], chakraColors[c], 1);
+        int barW = chakraEnergy[c] * 50;
+        fbRect(185, ey, barW, 8, chakraColors[c]);
+        ey += 18;
+    }
+
+    // Total energy
+    float totalEnergy = 0;
+    for (int c = 0; c < 7; c++) totalEnergy += chakraEnergy[c];
+    totalEnergy /= 7;
+
+    fbLine(0, 210, 240, 210, NEON_PURPLE);
+    sprintf(buf, "BALANCE:%.0f%%", totalEnergy * 100);
+    fbText(5, 215, buf, NEON_PINK, 2);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 26: AURA SCANNER =============
+// Kirlian-style biofield visualization
+void face_Aura() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "AURA SCAN", NEON_PINK, 2);
+    fbShimmer(2, 18);
+
+    // Update aura based on vitals
+    auraStrength = 0.5 + hrv / 100.0 + (100 - stress) / 200.0;
+    auraRadius = 30 + auraStrength * 20 + sin(frame * 0.05) * 5;
+
+    // Aura color based on emotional state
+    if (stress < 30) auraColor = NEON_GREEN;       // Calm
+    else if (stress < 50) auraColor = NEON_CYAN;   // Balanced
+    else if (stress < 70) auraColor = NEON_YELLOW; // Active
+    else auraColor = NEON_RED;                      // Stressed
+
+    int cx = 120, cy = 110;
+
+    // Draw aura layers (outer to inner)
+    for (int layer = 5; layer >= 0; layer--) {
+        int r = auraRadius + layer * 12;
+        uint16_t layerCol = auraColor;
+
+        // Vary color by layer
+        if (layer == 4) layerCol = NEON_PURPLE;
+        if (layer == 3) layerCol = NEON_CYAN;
+        if (layer == 2) layerCol = NEON_GREEN;
+
+        // Animated irregular edge
+        for (int a = 0; a < 360; a += 3) {
+            float angle = a * PI / 180;
+            float wobble = sin(angle * 5 + frame * 0.1 + layer) * (5 + layer * 2);
+            int px = cx + cos(angle) * (r + wobble);
+            int py = cy + sin(angle) * (r + wobble);
+            fbPixel(px, py, layerCol);
+        }
+    }
+
+    // Body silhouette in center
+    fbFillCircle(cx, cy - 20, 12, WHITE);  // Head
+    fbRect(cx - 15, cy - 5, 30, 35, WHITE);  // Body
+
+    // Aura color meaning
+    fbLine(0, 185, 240, 185, NEON_PINK);
+
+    const char* meaning = "BALANCED";
+    if (auraColor == NEON_GREEN) meaning = "PEACEFUL";
+    else if (auraColor == NEON_YELLOW) meaning = "ENERGETIC";
+    else if (auraColor == NEON_RED) meaning = "INTENSE";
+
+    fbText(5, 190, "AURA:", NEON_CYAN, 1);
+    fbText(50, 190, meaning, auraColor, 2);
+
+    sprintf(buf, "STRENGTH:%.0f%%", auraStrength * 100);
+    fbText(5, 210, buf, NEON_PURPLE, 1);
+
+    sprintf(buf, "RADIUS:%dCM", (int)(auraRadius * 2));
+    fbText(120, 210, buf, NEON_PINK, 1);
+
+    fbText(5, 225, "KIRLIAN STYLE", DIM_CYAN, 1);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 27: CIRCADIAN RHYTHM =============
+// Sleep/wake cycle (Czeisler 1999)
+void face_Circadian() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "CIRCADIAN", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+
+    // Calculate circadian phase from RTC
+    circadianPhase = rtcHour + rtcMin / 60.0;
+
+    // Melatonin: high at night (21:00-06:00)
+    if (circadianPhase > 21 || circadianPhase < 6) {
+        melatoninLevel = 0.8 + sin((circadianPhase - 3) * PI / 12) * 0.2;
+    } else {
+        melatoninLevel = 0.1 + sin(circadianPhase * PI / 24) * 0.1;
+    }
+
+    // Cortisol: peak in morning (06:00-09:00)
+    if (circadianPhase > 6 && circadianPhase < 12) {
+        cortisolLevel = 0.8 - (circadianPhase - 6) * 0.1;
+    } else {
+        cortisolLevel = 0.3 + sin(circadianPhase * PI / 24) * 0.2;
+    }
+
+    // 24-hour clock visualization
+    int cx = 120, cy = 100;
+    int cr = 60;
+
+    fbCircle(cx, cy, cr, NEON_CYAN);
+    fbCircle(cx, cy, cr + 1, NEON_CYAN);
+
+    // Hour markers
+    for (int h = 0; h < 24; h++) {
+        float angle = (h - 6) * PI / 12;  // 6:00 at top
+        int x1 = cx + cos(angle) * (cr - 5);
+        int y1 = cy + sin(angle) * (cr - 5);
+        int x2 = cx + cos(angle) * cr;
+        int y2 = cy + sin(angle) * cr;
+        fbLine(x1, y1, x2, y2, (h % 6 == 0) ? NEON_GREEN : GRID_DIM);
+    }
+
+    // Day/Night shading
+    for (int h = 21; h < 24; h++) {
+        float a1 = (h - 6) * PI / 12;
+        float a2 = (h + 1 - 6) * PI / 12;
+        for (float a = a1; a < a2; a += 0.05) {
+            int px = cx + cos(a) * (cr - 15);
+            int py = cy + sin(a) * (cr - 15);
+            fbPixel(px, py, NEON_PURPLE);
+        }
+    }
+    for (int h = 0; h < 6; h++) {
+        float a1 = (h - 6) * PI / 12;
+        float a2 = (h + 1 - 6) * PI / 12;
+        for (float a = a1; a < a2; a += 0.05) {
+            int px = cx + cos(a) * (cr - 15);
+            int py = cy + sin(a) * (cr - 15);
+            fbPixel(px, py, NEON_PURPLE);
+        }
+    }
+
+    // Current time hand
+    float timeAngle = (circadianPhase - 6) * PI / 12;
+    int hx = cx + cos(timeAngle) * (cr - 20);
+    int hy = cy + sin(timeAngle) * (cr - 20);
+    fbLine(cx, cy, hx, hy, NEON_GREEN);
+    fbFillCircle(hx, hy, 4, NEON_GREEN);
+
+    // Hormone levels
+    fbLine(0, 175, 240, 175, NEON_PURPLE);
+
+    // Melatonin bar
+    fbText(5, 180, "MELATONIN", NEON_PURPLE, 1);
+    int melBar = melatoninLevel * 100;
+    fbRect(90, 180, melBar, 10, NEON_PURPLE);
+
+    // Cortisol bar
+    fbText(5, 195, "CORTISOL", NEON_YELLOW, 1);
+    int cortBar = cortisolLevel * 100;
+    fbRect(90, 195, cortBar, 10, NEON_YELLOW);
+
+    // Sleep recommendation
+    const char* advice = "STAY AWAKE";
+    if (melatoninLevel > 0.6) advice = "SLEEP TIME";
+    else if (cortisolLevel > 0.6) advice = "PEAK ALERT";
+
+    fbText(5, 215, "STATUS:", NEON_CYAN, 1);
+    fbText(70, 215, advice, NEON_GREEN, 1);
+
+    fbText(5, 230, "CZEISLER 1999", DIM_CYAN, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// ============= NEW FACE 28: ELECTRODERMAL =============
+// Skin conductance (Boucsein 2012)
+void face_Electrodermal() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "EDA SCAN", NEON_YELLOW, 2);
+    fbShimmer(2, 18);
+
+    // Simulate EDA from stress/arousal
+    edaTonic = 4.0 + stress / 25.0;  // Baseline 4-8 µS
+    edaPhasic = sin(frame * 0.1) * (stress / 50.0);  // Event responses
+    edaLevel = edaTonic + edaPhasic;
+
+    // EDA waveform
+    fbText(5, 25, "SKIN CONDUCT:", NEON_CYAN, 1);
+
+    static float edaHistory[220] = {0};
+    for (int i = 0; i < 219; i++) edaHistory[i] = edaHistory[i + 1];
+    edaHistory[219] = edaLevel;
+
+    // Draw waveform
+    for (int x = 0; x < 220; x++) {
+        int y = 90 - (edaHistory[x] - 3) * 8;
+        y = constrain(y, 45, 90);
+        fbPixel(10 + x, y, NEON_GREEN);
+        fbPixel(10 + x, y + 1, NEON_GREEN);
+    }
+
+    // Grid lines
+    for (int g = 0; g < 5; g++) {
+        int gy = 45 + g * 12;
+        fbLine(10, gy, 230, gy, GRID_DIM);
+    }
+
+    // Current value
+    sprintf(buf, "%.1f uS", edaLevel);
+    fbTextCenter(105, buf, NEON_GREEN, 3);
+
+    // Components
+    fbLine(0, 145, 240, 145, NEON_YELLOW);
+
+    sprintf(buf, "TONIC:%.1f", edaTonic);
+    fbText(5, 150, buf, NEON_CYAN, 1);
+
+    sprintf(buf, "PHASIC:%.2f", edaPhasic);
+    fbText(120, 150, buf, NEON_PINK, 1);
+
+    // Arousal interpretation
+    fbText(5, 175, "AROUSAL:", NEON_PURPLE, 1);
+
+    const char* arousal = "LOW";
+    uint16_t arousalCol = NEON_GREEN;
+    if (edaLevel > 6) { arousal = "HIGH"; arousalCol = NEON_RED; }
+    else if (edaLevel > 5) { arousal = "MEDIUM"; arousalCol = NEON_YELLOW; }
+
+    fbText(80, 175, arousal, arousalCol, 2);
+
+    // Bar graph
+    int barW = (edaLevel - 2) * 25;
+    barW = constrain(barW, 0, 200);
+    fbRect(20, 200, barW, 15, arousalCol);
+    fbRect(20, 200, 200, 15, GRID_DIM);
+
+    fbText(5, 225, "BOUCSEIN 2012", DIM_CYAN, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// ============= NEW FACE 29: DARK MATTER =============
+// Fun cosmic detection (obviously simulated)
+void face_DarkMatter() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "DARK MATTER", NEON_PURPLE, 2);
+    fbShimmer(2, 18);
+
+    // Simulate dark matter events from random fluctuations
+    if (random(100) < 3) darkMatterEvents++;
+    darkMatterDensity = 0.23 + sin(frame * 0.01) * 0.02;
+
+    // Cosmic background
+    for (int i = 0; i < 50; i++) {
+        int x = random(240);
+        int y = random(240);
+        fbPixel(x, y, (random(3) == 0) ? NEON_PURPLE : GRID_DIM);
+    }
+
+    // Dark matter halo visualization
+    int cx = 120, cy = 120;
+
+    // Invisible mass visualization (purple glow)
+    for (int r = 80; r > 20; r -= 5) {
+        uint16_t col = (r > 60) ? DIM_RED : NEON_PURPLE;
+        for (int a = 0; a < 360; a += 10) {
+            float angle = a * PI / 180 + frame * 0.02;
+            float wobble = sin(angle * 3 + r * 0.1) * 10;
+            int px = cx + cos(angle) * (r + wobble);
+            int py = cy + sin(angle) * (r + wobble);
+            fbPixel(px, py, col);
+        }
+    }
+
+    // Detection events (flashes)
+    if (frame % 30 < 5 && darkMatterEvents > 0) {
+        int ex = random(80, 160);
+        int ey = random(80, 160);
+        fbFillCircle(ex, ey, 5, WHITE);
+        fbCircle(ex, ey, 10, NEON_PURPLE);
+    }
+
+    // Stats
+    sprintf(buf, "DENSITY:%.0f%%", darkMatterDensity * 100);
+    fbText(5, 25, buf, NEON_PURPLE, 1);
+
+    sprintf(buf, "EVENTS:%d", darkMatterEvents);
+    fbText(5, 40, buf, NEON_PINK, 1);
+
+    fbLine(0, 200, 240, 200, NEON_PURPLE);
+
+    fbText(5, 205, "WIMP SEARCH", NEON_CYAN, 1);
+    fbText(5, 220, "SIMULATED", NEON_YELLOW, 1);
+
+    fbText(140, 205, "23% OF", NEON_PURPLE, 1);
+    fbText(140, 220, "UNIVERSE", NEON_PURPLE, 1);
+
+    fbGlitch(3);
+    fbScanlines();
+}
+
+// ============= NEW FACE 30: GRAVITATIONAL WAVE =============
+// LIGO-inspired visualization
+void face_GravWave() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "GRAV WAVE", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+
+    // Simulate gravitational wave from entity motion
+    gwAmplitude = 0;
+    for (int i = 0; i < entityCount; i++) {
+        if (millis() - entities[i].lastSeen < 5000) {
+            // Movement creates "ripples in spacetime"
+            gwAmplitude += 1.0 / (entities[i].distanceM + 1);
+        }
+    }
+    gwAmplitude = (gwAmplitude * 0.3f < 1.0f) ? gwAmplitude * 0.3f : 1.0f;
+    gwFrequency = 50 + gwAmplitude * 200;
+
+    // Spacetime grid distortion
+    int cx = 120, cy = 110;
+
+    for (int gx = -5; gx <= 5; gx++) {
+        for (int gy = -5; gy <= 5; gy++) {
+            float dist = sqrt(gx * gx + gy * gy);
+            float wave = sin(dist * 0.5 - frame * 0.1) * gwAmplitude * 10;
+
+            int px = cx + gx * 20 + wave;
+            int py = cy + gy * 15 + wave * 0.5;
+
+            fbPixel(px, py, NEON_CYAN);
+            fbPixel(px + 1, py, NEON_CYAN);
+
+            // Grid lines
+            if (gx < 5) {
+                float wave2 = sin((dist + 1) * 0.5 - frame * 0.1) * gwAmplitude * 10;
+                int px2 = cx + (gx + 1) * 20 + wave2;
+                fbLine(px, py, px2, py, GRID_DIM);
+            }
+            if (gy < 5) {
+                float wave2 = sin(sqrt(gx * gx + (gy + 1) * (gy + 1)) * 0.5 - frame * 0.1) * gwAmplitude * 10;
+                int py2 = cy + (gy + 1) * 15 + wave2 * 0.5;
+                fbLine(px, py, px, py2, GRID_DIM);
+            }
+        }
+    }
+
+    // Waveform
+    fbText(5, 180, "STRAIN h:", NEON_GREEN, 1);
+    for (int x = 0; x < 220; x++) {
+        float h = sin(x * gwFrequency / 1000.0 + frame * 0.1) * gwAmplitude;
+        int y = 205 + h * 20;
+        fbPixel(10 + x, y, NEON_GREEN);
+    }
+
+    sprintf(buf, "AMP:%.2f", gwAmplitude);
+    fbText(5, 25, buf, NEON_CYAN, 1);
+
+    sprintf(buf, "FREQ:%.0fHz", gwFrequency);
+    fbText(140, 25, buf, NEON_PURPLE, 1);
+
+    fbText(5, 225, "LIGO STYLE", DIM_CYAN, 1);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 31: NEUTRINO DETECTOR =============
+// Super-Kamiokande inspired
+void face_Neutrino() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "NEUTRINO", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+
+    // Simulate neutrino events
+    if (random(100) < 5) {
+        neutrinoCount++;
+        neutrinoEnergy = random(10, 1000) / 10.0;  // MeV
+    }
+
+    // Water tank visualization (Cherenkov detector style)
+    int cx = 120, cy = 110;
+
+    // Tank outline
+    fbCircle(cx, cy, 70, NEON_CYAN);
+    fbCircle(cx, cy, 65, DIM_CYAN);
+
+    // PMT array (photomultipliers)
+    for (int a = 0; a < 360; a += 15) {
+        float angle = a * PI / 180;
+        int px = cx + cos(angle) * 67;
+        int py = cy + sin(angle) * 67;
+        fbFillCircle(px, py, 3, (a == (frame % 360)) ? NEON_GREEN : DIM_GREEN);
+    }
+
+    // Cherenkov cone (when event detected)
+    if (frame % 60 < 20) {
+        int evtX = cx + random(-30, 30);
+        int evtY = cy + random(-30, 30);
+
+        // Cone of light
+        for (int r = 5; r < 40; r += 3) {
+            float cone = r * 0.4;
+            for (int a = -30; a <= 30; a += 5) {
+                float angle = a * PI / 180 + random(10) / 100.0;
+                int px = evtX + cos(angle) * r;
+                int py = evtY + sin(angle) * r + r / 2;
+                fbPixel(px, py, NEON_CYAN);
+            }
+        }
+
+        fbFillCircle(evtX, evtY, 3, WHITE);
+    }
+
+    // Stats
+    sprintf(buf, "EVENTS:%d", neutrinoCount);
+    fbText(5, 25, buf, NEON_GREEN, 1);
+
+    sprintf(buf, "E:%.1f MeV", neutrinoEnergy);
+    fbText(140, 25, buf, NEON_PURPLE, 1);
+
+    fbLine(0, 195, 240, 195, NEON_CYAN);
+
+    fbText(5, 200, "FLUX:", NEON_CYAN, 1);
+    sprintf(buf, "%.0f /cm2/s", 65000.0 + sin(frame * 0.02) * 1000);
+    fbText(50, 200, buf, NEON_GREEN, 1);
+
+    fbText(5, 215, "CHERENKOV", NEON_PURPLE, 1);
+    fbText(5, 228, "SUPER-K STYLE", DIM_CYAN, 1);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 32: MORPHIC FIELD =============
+// Sheldrake fringe theory visualization
+void face_Morphic() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "MORPHIC", NEON_PINK, 2);
+    fbShimmer(2, 18);
+
+    // Update morphic resonance from entity patterns
+    morphicField = 0.5;
+    collectiveMemoryHits = 0;
+
+    for (int i = 0; i < entityCount; i++) {
+        if (millis() - entities[i].lastSeen < 5000) {
+            // Similar signatures = morphic resonance
+            if (entities[i].bioSimilarity > 0.6) {
+                morphicField += 0.1;
+                collectiveMemoryHits++;
+            }
+        }
+    }
+    morphicField = min(1.0f, morphicField);
+
+    // Field visualization - interconnected web
+    int cx = 120, cy = 110;
+
+    // Central field
+    for (int r = 20; r <= 70; r += 10) {
+        float wobble = sin(frame * 0.05 + r * 0.1) * morphicField * 15;
+        for (int a = 0; a < 360; a += 5) {
+            float angle = a * PI / 180;
+            int px = cx + cos(angle) * (r + wobble);
+            int py = cy + sin(angle) * (r + wobble);
+            fbPixel(px, py, NEON_PINK);
+        }
+    }
+
+    // Entity connections (morphic links)
+    int maxMorphic = (entityCount < 6) ? entityCount : 6;
+    for (int i = 0; i < maxMorphic; i++) {
+        if (millis() - entities[i].lastSeen > 5000) continue;
+
+        float angle = i * PI / 3;
+        int ex = cx + cos(angle) * 50;
+        int ey = cy + sin(angle) * 50;
+
+        fbFillCircle(ex, ey, 5, NEON_CYAN);
+
+        // Resonance link to center
+        if (entities[i].bioSimilarity > 0.5) {
+            for (int p = 0; p < 10; p++) {
+                float t = p / 10.0 + sin(frame * 0.1) * 0.1;
+                int lx = cx + (ex - cx) * t;
+                int ly = cy + (ey - cy) * t;
+                fbPixel(lx, ly, NEON_PINK);
+            }
+        }
+    }
+
+    // Stats
+    sprintf(buf, "FIELD:%.0f%%", morphicField * 100);
+    fbText(5, 25, buf, NEON_PINK, 1);
+
+    sprintf(buf, "RESONANCE:%d", collectiveMemoryHits);
+    fbText(130, 25, buf, NEON_CYAN, 1);
+
+    fbLine(0, 195, 240, 195, NEON_PURPLE);
+
+    fbText(5, 200, "COLLECTIVE", NEON_CYAN, 1);
+    fbText(5, 215, "MEMORY FIELD", NEON_PINK, 1);
+
+    fbText(130, 200, "SHELDRAKE", DIM_CYAN, 1);
+    fbText(130, 215, "HYPOTHESIS", DIM_CYAN, 1);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 33: TIMELINE CONVERGENCE =============
+// Probability visualization
+void face_Timeline() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "TIMELINE", NEON_GREEN, 2);
+    fbShimmer(2, 18);
+
+    // Calculate timeline convergence from entity stability
+    timelineConvergence = 0.7;
+    parallelTimelines = 1;
+
+    for (int i = 0; i < entityCount; i++) {
+        if (millis() - entities[i].lastSeen < 3000) {
+            timelineConvergence += 0.05;
+            if (entities[i].bioSimilarity > 0.8) parallelTimelines++;
+        }
+    }
+    timelineConvergence = min(1.0f, timelineConvergence);
+    fateIndex = 0.5 + timelineConvergence * 0.4 + sin(frame * 0.02) * 0.1;
+
+    // Timeline visualization
+    int cx = 120;
+
+    // Past -> Present -> Future
+    fbLine(20, 80, 220, 80, GRID_DIM);
+    fbText(15, 85, "PAST", DIM_CYAN, 1);
+    fbText(100, 85, "NOW", NEON_GREEN, 1);
+    fbText(185, 85, "FUTURE", DIM_CYAN, 1);
+
+    // Branching timelines
+    for (int t = 0; t < parallelTimelines && t < 5; t++) {
+        int startX = 120;
+        int y = 100 + t * 25;
+
+        float divergence = (1.0 - timelineConvergence) * 50;
+
+        // Draw timeline branch
+        for (int x = 0; x < 100; x++) {
+            float branch = sin(x * 0.1 + t) * divergence * (x / 100.0);
+            int py = y + branch;
+            uint16_t col = (t == 0) ? NEON_GREEN : NEON_CYAN;
+            fbPixel(startX + x, py, col);
+        }
+
+        // Branch point
+        fbFillCircle(startX, y, 3, NEON_PINK);
+    }
+
+    // Convergence indicator
+    fbLine(0, 180, 240, 180, NEON_PURPLE);
+
+    fbText(5, 185, "CONVERGENCE:", NEON_CYAN, 1);
+    int convBar = timelineConvergence * 120;
+    fbRect(110, 185, convBar, 12, NEON_GREEN);
+    fbRect(110, 185, 120, 12, GRID_DIM);
+
+    sprintf(buf, "FATE INDEX:%.0f%%", fateIndex * 100);
+    fbText(5, 205, buf, NEON_PINK, 1);
+
+    sprintf(buf, "BRANCHES:%d", parallelTimelines);
+    fbText(140, 205, buf, NEON_PURPLE, 1);
+
+    fbText(5, 225, "PROBABILITY", DIM_CYAN, 1);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 34: BIOELECTRIC FIELD =============
+// Body electric field visualization
+void face_Bioelectric() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "BIOELECTRIC", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+
+    int cx = 120, cy = 110;
+
+    // Body outline
+    fbCircle(cx, cy - 50, 15, NEON_PINK);  // Head
+    fbRect(cx - 20, cy - 30, 40, 50, DIM_CYAN);  // Torso
+
+    // Electric field lines
+    for (int field = 0; field < 12; field++) {
+        float baseAngle = field * PI / 6;
+        float amplitude = 40 + sin(frame * 0.1 + field) * 10;
+
+        // Field line
+        for (float t = 0; t < 1; t += 0.02) {
+            float angle = baseAngle + sin(t * PI * 2 + frame * 0.05) * 0.3;
+            float r = 30 + t * amplitude;
+            int px = cx + cos(angle) * r;
+            int py = cy + sin(angle) * r;
+
+            // Color gradient based on field strength
+            uint16_t col = (t < 0.3) ? NEON_CYAN :
+                          (t < 0.6) ? NEON_GREEN : NEON_YELLOW;
+            fbPixel(px, py, col);
+        }
+    }
+
+    // Charge points
+    fbFillCircle(cx, cy - 50, 5, NEON_PINK);   // Head +
+    fbFillCircle(cx - 25, cy - 10, 4, NEON_CYAN);  // Heart
+    fbFillCircle(cx + 25, cy - 10, 4, NEON_GREEN); // Solar plexus
+
+    // Field strength meter
+    float fieldStrength = 50 + hrv / 2 + sin(frame * 0.05) * 10;
+
+    fbLine(0, 185, 240, 185, NEON_CYAN);
+
+    sprintf(buf, "FIELD:%.0f mV", fieldStrength);
+    fbText(5, 190, buf, NEON_GREEN, 2);
+
+    sprintf(buf, "POLARITY:+/-");
+    fbText(5, 215, buf, NEON_CYAN, 1);
+
+    sprintf(buf, "FREQ:%.1f Hz", 7.83 + sin(frame * 0.02) * 0.5);
+    fbText(120, 215, buf, NEON_PURPLE, 1);
+
+    fbText(5, 230, "SCHUMANN RES", DIM_CYAN, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// ============= NEW FACE 35: DNA RESONANCE =============
+// Double helix visualization
+void face_DNA() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "DNA SCAN", NEON_GREEN, 2);
+    fbShimmer(2, 18);
+
+    // Rotating double helix
+    int cx = 120;
+
+    for (int y = 30; y < 180; y += 3) {
+        float phase = y * 0.1 + frame * 0.1;
+
+        // Strand 1
+        int x1 = cx + sin(phase) * 40;
+        fbFillCircle(x1, y, 4, NEON_CYAN);
+
+        // Strand 2 (180° out of phase)
+        int x2 = cx + sin(phase + PI) * 40;
+        fbFillCircle(x2, y, 4, NEON_PINK);
+
+        // Base pairs (rungs)
+        if (y % 9 < 3) {
+            fbLine(x1, y, x2, y, NEON_GREEN);
+            // Base pair letters
+            const char* bases[] = {"A-T", "G-C", "T-A", "C-G"};
+            int baseIdx = (y / 9) % 4;
+            fbText(cx - 10, y - 3, bases[baseIdx], NEON_YELLOW, 1);
+        }
+    }
+
+    // Stats
+    fbLine(0, 190, 240, 190, NEON_GREEN);
+
+    fbText(5, 195, "TELOMERE:", NEON_CYAN, 1);
+    int telomere = 8000 - (frame % 100);
+    sprintf(buf, "%d bp", telomere);
+    fbText(90, 195, buf, NEON_GREEN, 1);
+
+    fbText(5, 210, "METHYLATION:", NEON_PURPLE, 1);
+    sprintf(buf, "%.0f%%", 75 + sin(frame * 0.01) * 5);
+    fbText(110, 210, buf, NEON_PINK, 1);
+
+    fbText(5, 225, "WATSON-CRICK", DIM_CYAN, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// ============= NEW FACE 36: HOLOGRAPHIC UNIVERSE =============
+// Holographic principle visualization
+void face_Holographic() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "HOLOGRAPH", NEON_PURPLE, 2);
+    fbShimmer(2, 18);
+
+    // Holographic boundary
+    int cx = 120, cy = 110;
+
+    // 2D surface encoding 3D reality
+    for (int r = 20; r <= 70; r += 5) {
+        for (int a = 0; a < 360; a += 3) {
+            float angle = a * PI / 180;
+
+            // Information bits on surface
+            float info = sin(angle * 10 + r * 0.3 + frame * 0.05);
+            uint16_t col = (info > 0) ? NEON_CYAN : NEON_PURPLE;
+
+            int px = cx + cos(angle) * r;
+            int py = cy + sin(angle) * r;
+            fbPixel(px, py, col);
+        }
+    }
+
+    // Inner "projection"
+    for (int i = 0; i < 20; i++) {
+        float angle = random(360) * PI / 180;
+        float r = random(15, 50);
+        int px = cx + cos(angle) * r;
+        int py = cy + sin(angle) * r;
+
+        if (frame % 20 < 10) {
+            fbPixel(px, py, NEON_GREEN);
+            fbPixel(px + 1, py, NEON_GREEN);
+        }
+    }
+
+    // Information density
+    float infoDensity = entityCount * 10 + 50;
+
+    fbLine(0, 185, 240, 185, NEON_PURPLE);
+
+    sprintf(buf, "INFO:%.0f bits", infoDensity);
+    fbText(5, 190, buf, NEON_CYAN, 1);
+
+    fbText(5, 210, "BEKENSTEIN", NEON_GREEN, 1);
+    fbText(5, 225, "BOUND", NEON_GREEN, 1);
+
+    fbText(120, 190, "SURFACE=", NEON_PURPLE, 1);
+    fbText(120, 205, "VOLUME", NEON_PURPLE, 1);
+    fbText(120, 220, "'T HOOFT 1993", DIM_CYAN, 1);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 37: SCHRODINGER STATE =============
+// Quantum superposition cat state
+void face_Schrodinger() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "SCHRODINGER", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+
+    // Superposition state (both alive and dead until observed)
+    bool collapsed = touchPressed;  // Observation collapses state
+
+    int cx = 120, cy = 100;
+
+    // Box
+    fbRect(cx - 50, cy - 40, 100, 80, NEON_CYAN);
+
+    if (!collapsed) {
+        // Superposition - flickering cat
+        if ((frame / 5) % 2 == 0) {
+            // Alive state
+            fbText(cx - 20, cy - 10, ":3", NEON_GREEN, 3);
+            fbText(cx - 35, cy + 20, "ALIVE", NEON_GREEN, 1);
+        } else {
+            // Dead state
+            fbText(cx - 20, cy - 10, "X_X", NEON_RED, 3);
+            fbText(cx - 30, cy + 20, "DEAD", NEON_RED, 1);
+        }
+
+        fbText(cx - 45, cy - 35, "?+?", NEON_PURPLE, 2);
+    } else {
+        // Collapsed state
+        if (random(2) == 0) {
+            fbText(cx - 20, cy - 10, ":3", NEON_GREEN, 3);
+            fbText(cx - 35, cy + 20, "ALIVE!", NEON_GREEN, 2);
+        } else {
+            fbText(cx - 20, cy - 10, "X_X", NEON_RED, 3);
+            fbText(cx - 30, cy + 20, "DEAD!", NEON_RED, 2);
+        }
+    }
+
+    // Wave function
+    fbText(5, 170, "PSI:", NEON_CYAN, 1);
+    fbText(40, 170, collapsed ? "COLLAPSED" : "SUPERPOSED", collapsed ? NEON_GREEN : NEON_PURPLE, 1);
+
+    // Probability
+    fbText(5, 190, "P(ALIVE):", NEON_GREEN, 1);
+    fbText(90, 190, collapsed ? "100% or 0%" : "50%", NEON_GREEN, 1);
+
+    fbText(5, 210, "TAP TO", NEON_YELLOW, 1);
+    fbText(60, 210, "OBSERVE", NEON_YELLOW, 1);
+
+    fbText(5, 228, "1935 PARADOX", DIM_CYAN, 1);
+
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 38: ENTROPY METER =============
+// Thermodynamic entropy visualization
+void face_Entropy() {
+    fbClear(BLACK);
+    char buf[32];
+
+    fbTextCenter(2, "ENTROPY", NEON_RED, 2);
+    fbShimmer(2, 18);
+
+    // Calculate local entropy from entity disorder
+    float entropy = 0;
+    for (int i = 0; i < entityCount; i++) {
+        if (millis() - entities[i].lastSeen < 5000) {
+            // More varied distances = higher entropy
+            entropy += abs(entities[i].distanceM - avgDistanceM);
+        }
+    }
+    entropy = min(100.0f, entropy * 10 + 30);
+
+    // Particle visualization
+    int cx = 120, cy = 100;
+
+    for (int p = 0; p < 50; p++) {
+        float speed = entropy / 50.0;
+        float angle = p * 0.5 + frame * speed * 0.1;
+        float r = 20 + (p % 5) * 15 + sin(frame * 0.1 + p) * 5 * speed;
+
+        int px = cx + cos(angle) * r;
+        int py = cy + sin(angle) * r;
+
+        uint16_t col = (entropy > 70) ? NEON_RED :
+                       (entropy > 40) ? NEON_YELLOW : NEON_CYAN;
+        fbFillCircle(px, py, 2, col);
+    }
+
+    // Container
+    fbCircle(cx, cy, 75, GRID_DIM);
+
+    // Stats
+    fbLine(0, 180, 240, 180, NEON_RED);
+
+    sprintf(buf, "S:%.1f J/K", entropy);
+    fbText(5, 185, buf, NEON_CYAN, 2);
+
+    fbText(5, 210, "DISORDER:", NEON_PURPLE, 1);
+    const char* disorder = (entropy > 70) ? "HIGH" :
+                          (entropy > 40) ? "MEDIUM" : "LOW";
+    uint16_t disCol = (entropy > 70) ? NEON_RED :
+                      (entropy > 40) ? NEON_YELLOW : NEON_GREEN;
+    fbText(90, 210, disorder, disCol, 1);
+
+    fbText(5, 228, "BOLTZMANN", DIM_CYAN, 1);
+
+    fbGlitch(1);
+    fbScanlines();
+}
+
+// Forward declarations for remaining faces
+void face_Precognition();
+void face_Telepathy();
+void face_Akashic();
+void face_Vortex();
+void face_Plasma();
+void face_Antimatter();
+void face_StringTheory();
+void face_Multiverse();
+void face_ZeroPoint();
+void face_Tachyon();
+void face_Resonance();
+void face_Synchronicity();
+void face_Matrix();
+void face_Simulation();
+void face_Consciousness();
+void face_Psi();
+void face_Remote();
+void face_Astral();
+void face_Lucid();
+void face_OBE();
+
+// ============= NEW FACE 39: PRECOGNITION =============
+void face_Precognition() {
+    fbClear(BLACK);
+    char buf[32];
+    fbTextCenter(2, "PRECOG", NEON_PINK, 2);
+    fbShimmer(2, 18);
+
+    // Predict future entity positions
+    fbText(5, 30, "FUTURE SCAN:", NEON_CYAN, 1);
+
+    int predCount = 0;
+    for (int t = 1; t <= 3; t++) {
+        int ty = 50 + (t - 1) * 55;
+        sprintf(buf, "+%d SEC:", t);
+        fbText(5, ty, buf, NEON_PURPLE, 1);
+
+        // Predicted entity positions
+        int maxPred = (entityCount < 3) ? entityCount : 3;
+        for (int i = 0; i < maxPred; i++) {
+            if (millis() - entities[i].lastSeen > 5000) continue;
+
+            float futureX = entities[i].x + cos(frame * 0.02 + i) * t * 5;
+            float futureY = entities[i].y + sin(frame * 0.02 + i) * t * 5;
+            float futureDist = entities[i].distanceM + sin(frame * 0.01) * t * 0.5;
+
+            sprintf(buf, "E%d:%.1fM", i, futureDist);
+            fbText(70 + i * 60, ty, buf, NEON_GREEN, 1);
+
+            predCount++;
+        }
+
+        // Probability confidence
+        int conf = 95 - t * 20;
+        sprintf(buf, "%d%%", conf);
+        fbText(200, ty, buf, (conf > 50) ? NEON_GREEN : NEON_YELLOW, 1);
+    }
+
+    fbLine(0, 200, 240, 200, NEON_PINK);
+    sprintf(buf, "PREDICTIONS:%d", predCount);
+    fbText(5, 205, buf, NEON_CYAN, 1);
+    fbText(5, 222, "BAYESIAN PROJ", DIM_CYAN, 1);
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 40: TELEPATHY =============
+void face_Telepathy() {
+    fbClear(BLACK);
+    char buf[32];
+    fbTextCenter(2, "TELEPATHY", NEON_PURPLE, 2);
+    fbShimmer(2, 18);
+
+    // Mind-to-mind "connection" visualization
+    int cx = 120, cy = 100;
+
+    // Two brain silhouettes
+    fbCircle(50, cy, 25, NEON_CYAN);
+    fbCircle(190, cy, 25, NEON_PINK);
+
+    // Thought wave between them
+    for (int x = 80; x < 160; x++) {
+        float wave = sin(x * 0.2 - frame * 0.2) * 15;
+        int y = cy + wave;
+        uint16_t col = ((x + frame) % 20 < 10) ? NEON_CYAN : NEON_PINK;
+        fbPixel(x, y, col);
+        fbPixel(x, y + 1, col);
+    }
+
+    // Connection strength based on nearby entities
+    float telepathyStr = 0;
+    for (int i = 0; i < entityCount; i++) {
+        if (entities[i].bioSimilarity > 0.6) telepathyStr += 0.2;
+    }
+    telepathyStr = min(1.0f, telepathyStr);
+
+    sprintf(buf, "SYNC:%.0f%%", telepathyStr * 100);
+    fbTextCenter(150, buf, NEON_GREEN, 2);
+
+    fbText(5, 180, "BRAINWAVE", NEON_CYAN, 1);
+    fbText(5, 195, "COHERENCE", NEON_CYAN, 1);
+    fbText(120, 180, "GANZFELD", DIM_CYAN, 1);
+    fbText(120, 195, "PROTOCOL", DIM_CYAN, 1);
+
+    fbLine(0, 210, 240, 210, NEON_PURPLE);
+    fbText(5, 215, "PSI RESEARCH", NEON_PINK, 1);
+    fbGlitch(2);
+    fbScanlines();
+}
+
+// ============= NEW FACE 41: AKASHIC RECORDS =============
+void face_Akashic() {
+    fbClear(BLACK);
+    char buf[32];
+    fbTextCenter(2, "AKASHIC", NEON_YELLOW, 2);
+    fbShimmer(2, 18);
+
+    // Cosmic library visualization
+    int cx = 120, cy = 100;
+
+    // Glowing orb of knowledge
+    for (int r = 50; r > 10; r -= 5) {
+        uint16_t col = (r > 40) ? NEON_PURPLE : (r > 25) ? NEON_PINK : NEON_YELLOW;
+        fbCircle(cx, cy, r, col);
+    }
+
+    // Data streams flowing into orb
+    for (int stream = 0; stream < 6; stream++) {
+        float angle = stream * PI / 3 + frame * 0.02;
+        for (int d = 60; d > 15; d -= 4) {
+            int px = cx + cos(angle) * d;
+            int py = cy + sin(angle) * d;
+            fbPixel(px, py, NEON_CYAN);
+        }
+    }
+
+    // Records count
+    unsigned long records = millis() / 10 + entityCount * 1000;
+    sprintf(buf, "RECORDS:");
+    fbText(5, 170, buf, NEON_PURPLE, 1);
+    sprintf(buf, "%lu", records);
+    fbText(80, 170, buf, NEON_CYAN, 1);
+
+    fbText(5, 190, "UNIVERSAL", NEON_YELLOW, 1);
+    fbText(5, 205, "MEMORY FIELD", NEON_YELLOW, 1);
+
+    fbText(120, 190, "THEOSOPHIC", DIM_CYAN, 1);
+    fbText(120, 205, "CONCEPT", DIM_CYAN, 1);
+
+    fbLine(0, 220, 240, 220, NEON_PURPLE);
+    fbText(5, 225, "ALL KNOWLEDGE", NEON_PINK, 1);
+    fbGlitch(3);
+    fbScanlines();
+}
+
+// ============= NEW FACE 42-58: Quick spectacular faces =============
+
+void face_Vortex() {
+    fbClear(BLACK);
+    fbTextCenter(2, "VORTEX", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+    int cx = 120, cy = 120;
+    for (int r = 10; r < 100; r += 3) {
+        float angle = r * 0.15 + frame * 0.1;
+        int px = cx + cos(angle) * r;
+        int py = cy + sin(angle) * r;
+        uint16_t col = (r % 9 < 3) ? NEON_CYAN : (r % 9 < 6) ? NEON_PURPLE : NEON_PINK;
+        fbFillCircle(px, py, 3, col);
+    }
+    fbText(5, 220, "ENERGY SPIRAL", NEON_GREEN, 1);
+    fbScanlines();
+}
+
+void face_Plasma() {
+    fbClear(BLACK);
+    fbTextCenter(2, "PLASMA", NEON_ORANGE, 2);
+    fbShimmer(2, 18);
+    for (int y = 30; y < 200; y += 4) {
+        for (int x = 10; x < 230; x += 4) {
+            float v = sin(x * 0.05 + frame * 0.1) + sin(y * 0.05 + frame * 0.08);
+            v += sin((x + y) * 0.03 + frame * 0.05);
+            int intensity = (v + 3) * 40;
+            uint16_t col = (intensity > 150) ? NEON_ORANGE : (intensity > 100) ? NEON_YELLOW : NEON_RED;
+            fbRect(x, y, 3, 3, col);
+        }
+    }
+    fbText(5, 210, "STATE IV MATTER", NEON_CYAN, 1);
+    fbScanlines();
+}
+
+void face_Antimatter() {
+    fbClear(BLACK);
+    fbTextCenter(2, "ANTIMATTER", NEON_RED, 2);
+    fbShimmer(2, 18);
+    int cx = 120, cy = 100;
+    fbCircle(cx - 30, cy, 20, NEON_CYAN);
+    fbText(cx - 35, cy - 5, "e-", NEON_CYAN, 1);
+    fbCircle(cx + 30, cy, 20, NEON_RED);
+    fbText(cx + 25, cy - 5, "e+", NEON_RED, 1);
+    if ((frame / 10) % 3 == 0) {
+        for (int r = 5; r < 30; r += 5) {
+            fbCircle(cx, cy, r, NEON_YELLOW);
+        }
+        fbText(cx - 25, cy + 30, "ANNIHILATION!", NEON_YELLOW, 1);
+    }
+    fbText(5, 180, "DIRAC 1928", DIM_CYAN, 1);
+    fbText(5, 200, "E=MC2 RELEASE", NEON_PINK, 1);
+    fbScanlines();
+}
+
+void face_StringTheory() {
+    fbClear(BLACK);
+    fbTextCenter(2, "STRINGS", NEON_GREEN, 2);
+    fbShimmer(2, 18);
+    for (int s = 0; s < 8; s++) {
+        int sy = 40 + s * 22;
+        for (int x = 20; x < 220; x++) {
+            float vib = sin(x * 0.1 + frame * 0.15 + s * 0.5) * 8;
+            fbPixel(x, sy + vib, chakraColors[s % 7]);
+        }
+    }
+    fbText(5, 200, "11 DIMENSIONS", NEON_CYAN, 1);
+    fbText(5, 215, "WITTEN M-THEORY", DIM_CYAN, 1);
+    fbScanlines();
+}
+
+void face_Multiverse() {
+    fbClear(BLACK);
+    fbTextCenter(2, "MULTIVERSE", NEON_PURPLE, 2);
+    fbShimmer(2, 18);
+    for (int u = 0; u < 5; u++) {
+        int ux = 40 + u * 45;
+        int uy = 100 + sin(frame * 0.05 + u) * 20;
+        int ur = 15 + u * 3;
+        fbCircle(ux, uy, ur, chakraColors[u]);
+        if (u < 4) fbLine(ux + ur, uy, ux + 45 - ur, uy, GRID_DIM);
+    }
+    char buf[32];
+    sprintf(buf, "UNIVERSE:%d", (frame / 50) % 999 + 1);
+    fbText(5, 180, buf, NEON_CYAN, 1);
+    fbText(5, 200, "EVERETT III", DIM_CYAN, 1);
+    fbText(5, 215, "MANY WORLDS", NEON_PINK, 1);
+    fbScanlines();
+}
+
+void face_ZeroPoint() {
+    fbClear(BLACK);
+    fbTextCenter(2, "ZERO POINT", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+    int cx = 120, cy = 100;
+    for (int i = 0; i < 100; i++) {
+        float angle = random(360) * PI / 180;
+        float r = random(5, 60);
+        int px = cx + cos(angle) * r;
+        int py = cy + sin(angle) * r;
+        fbPixel(px, py, (random(2) == 0) ? NEON_CYAN : NEON_PURPLE);
+    }
+    fbCircle(cx, cy, 60, NEON_GREEN);
+    fbText(5, 180, "VACUUM ENERGY", NEON_YELLOW, 1);
+    fbText(5, 200, "CASIMIR EFFECT", NEON_CYAN, 1);
+    char buf[32];
+    sprintf(buf, "E:%.2e J/m3", 1.0e113);
+    fbText(5, 215, buf, NEON_PINK, 1);
+    fbScanlines();
+}
+
+void face_Tachyon() {
+    fbClear(BLACK);
+    fbTextCenter(2, "TACHYON", NEON_YELLOW, 2);
+    fbShimmer(2, 18);
+    for (int t = 0; t < 10; t++) {
+        int tx = (240 - (frame * 8 + t * 20) % 280);
+        int ty = 60 + t * 15;
+        for (int trail = 0; trail < 30; trail++) {
+            fbPixel(tx + trail, ty, (trail < 10) ? NEON_YELLOW : NEON_ORANGE);
+        }
+        fbFillCircle(tx, ty, 3, WHITE);
+    }
+    fbText(5, 190, "V > C", NEON_RED, 2);
+    fbText(5, 215, "FTL PARTICLE", NEON_CYAN, 1);
+    fbScanlines();
+}
+
+void face_Resonance() {
+    fbClear(BLACK);
+    fbTextCenter(2, "RESONANCE", NEON_GREEN, 2);
+    fbShimmer(2, 18);
+    int cx = 120, cy = 100;
+    for (int h = 1; h <= 5; h++) {
+        float freq = h * 0.2;
+        for (int x = 20; x < 220; x++) {
+            float y = sin(x * freq + frame * 0.1 * h) * (30 / h);
+            fbPixel(x, cy + y, chakraColors[h]);
+        }
+    }
+    fbText(5, 180, "HARMONICS", NEON_CYAN, 1);
+    fbText(5, 200, "SCHUMANN 7.83Hz", NEON_GREEN, 1);
+    char buf[32];
+    sprintf(buf, "FREQ:%.2f Hz", 7.83 + sin(frame * 0.01) * 0.5);
+    fbText(5, 215, buf, NEON_PINK, 1);
+    fbScanlines();
+}
+
+void face_Synchronicity() {
+    fbClear(BLACK);
+    fbTextCenter(2, "SYNCHRO", NEON_PINK, 2);
+    fbShimmer(2, 18);
+    char buf[32];
+    sprintf(buf, "%02d:%02d:%02d", rtcHour, rtcMin, rtcSec);
+    fbTextCenter(60, buf, NEON_CYAN, 3);
+    bool sync = (rtcHour == rtcMin) || (rtcMin == rtcSec) || (rtcHour == 11 && rtcMin == 11);
+    if (sync) {
+        fbTextCenter(110, "SYNC EVENT!", NEON_GREEN, 2);
+        for (int r = 30; r < 60; r += 5) fbCircle(120, 90, r, NEON_PINK);
+    }
+    int events = (millis() / 60000) % 100;
+    sprintf(buf, "EVENTS:%d", events);
+    fbText(5, 180, buf, NEON_PURPLE, 1);
+    fbText(5, 200, "JUNG 1952", DIM_CYAN, 1);
+    fbText(5, 215, "MEANINGFUL", NEON_CYAN, 1);
+    fbScanlines();
+}
+
+void face_Matrix() {
+    fbClear(BLACK);
+    fbTextCenter(2, "MATRIX", NEON_GREEN, 2);
+    static int drops[24] = {0};
+    for (int col = 0; col < 24; col++) {
+        drops[col] += 3 + random(5);
+        if (drops[col] > 240) drops[col] = random(50);
+        for (int trail = 0; trail < 15; trail++) {
+            int y = drops[col] - trail * 10;
+            if (y > 20 && y < 240) {
+                char c = 'A' + random(26);
+                uint16_t col_c = (trail == 0) ? WHITE : (trail < 5) ? NEON_GREEN : DIM_GREEN;
+                fbChar(col * 10, y, c, col_c, 1);
+            }
+        }
+    }
+    fbText(5, 225, "SIMULATION?", NEON_CYAN, 1);
+    fbScanlines();
+}
+
+void face_Simulation() {
+    fbClear(BLACK);
+    fbTextCenter(2, "SIMULATN", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+    for (int y = 30; y < 180; y += 20) {
+        for (int x = 10; x < 230; x += 20) {
+            bool glitch = (random(100) < 5);
+            if (glitch) {
+                fbRect(x, y, 18, 18, NEON_RED);
+                fbText(x + 2, y + 5, "ERR", NEON_RED, 1);
+            } else {
+                fbRect(x, y, 18, 18, GRID_DIM);
+            }
+        }
+    }
+    char buf[32];
+    sprintf(buf, "RENDER:%.1f FPS", 1000.0 / 40);
+    fbText(5, 190, buf, NEON_GREEN, 1);
+    fbText(5, 210, "BOSTROM 2003", DIM_CYAN, 1);
+    fbText(5, 225, "HYPOTHESIS", NEON_PURPLE, 1);
+    fbScanlines();
+}
+
+void face_Consciousness() {
+    fbClear(BLACK);
+    fbTextCenter(2, "CONSCIOUS", NEON_PURPLE, 2);
+    fbShimmer(2, 18);
+    int cx = 120, cy = 100;
+    for (int layer = 0; layer < 5; layer++) {
+        int r = 20 + layer * 15;
+        for (int a = 0; a < 360; a += 5) {
+            float angle = a * PI / 180 + frame * 0.02 * (layer + 1);
+            int px = cx + cos(angle) * r;
+            int py = cy + sin(angle) * r;
+            fbPixel(px, py, chakraColors[layer]);
+        }
+    }
+    fbFillCircle(cx, cy, 10, WHITE);
+    fbText(5, 180, "PHI:", NEON_CYAN, 1);
+    char buf[32];
+    sprintf(buf, "%.2f", 3.5 + sin(frame * 0.01));
+    fbText(40, 180, buf, NEON_GREEN, 1);
+    fbText(5, 200, "TONONI IIT", DIM_CYAN, 1);
+    fbText(5, 215, "INTEGRATED INFO", NEON_PINK, 1);
+    fbScanlines();
+}
+
+void face_Psi() {
+    fbClear(BLACK);
+    fbTextCenter(2, "PSI FIELD", NEON_PINK, 2);
+    fbShimmer(2, 18);
+    int cx = 120, cy = 100;
+    fbText(cx - 15, cy - 10, "PSI", NEON_CYAN, 3);
+    for (int wave = 0; wave < 360; wave += 10) {
+        float angle = wave * PI / 180;
+        float r = 50 + sin(wave * 0.1 + frame * 0.1) * 20;
+        int px = cx + cos(angle) * r;
+        int py = cy + sin(angle) * r;
+        fbPixel(px, py, NEON_PURPLE);
+    }
+    char buf[32];
+    float psiStr = 0.5 + sin(frame * 0.02) * 0.3;
+    sprintf(buf, "FIELD:%.0f%%", psiStr * 100);
+    fbText(5, 180, buf, NEON_GREEN, 1);
+    fbText(5, 200, "PARAPSYCH", DIM_CYAN, 1);
+    fbText(5, 215, "RESEARCH", NEON_CYAN, 1);
+    fbScanlines();
+}
+
+void face_Remote() {
+    fbClear(BLACK);
+    fbTextCenter(2, "REMOTE VW", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+    fbRect(40, 50, 160, 100, NEON_PURPLE);
+    int targetX = 120 + sin(frame * 0.03) * 50;
+    int targetY = 100 + cos(frame * 0.04) * 30;
+    fbCircle(targetX, targetY, 15, NEON_GREEN);
+    fbLine(targetX - 20, targetY, targetX + 20, targetY, NEON_GREEN);
+    fbLine(targetX, targetY - 20, targetX, targetY + 20, NEON_GREEN);
+    char buf[32];
+    sprintf(buf, "TARGET:%03d", (frame / 10) % 1000);
+    fbText(5, 170, buf, NEON_PINK, 1);
+    fbText(5, 190, "SRI PROGRAM", DIM_CYAN, 1);
+    fbText(5, 210, "STARGATE", NEON_YELLOW, 1);
+    fbScanlines();
+}
+
+void face_Astral() {
+    fbClear(BLACK);
+    fbTextCenter(2, "ASTRAL", NEON_PURPLE, 2);
+    fbShimmer(2, 18);
+    int cx = 120, cy = 90;
+    fbCircle(cx, cy, 20, NEON_CYAN);
+    fbFillCircle(cx, cy, 15, DIM_CYAN);
+    int astralX = cx + sin(frame * 0.05) * 40;
+    int astralY = cy - 30 + cos(frame * 0.03) * 20;
+    for (int r = 15; r > 5; r -= 2) {
+        fbCircle(astralX, astralY, r, NEON_PINK);
+    }
+    for (int i = 0; i < 10; i++) {
+        float t = i / 10.0;
+        int lx = cx + (astralX - cx) * t;
+        int ly = cy + (astralY - cy) * t;
+        fbPixel(lx, ly, NEON_PURPLE);
+    }
+    fbText(5, 160, "SILVER CORD", NEON_CYAN, 1);
+    fbText(5, 180, "PROJECTION", NEON_PINK, 1);
+    fbText(5, 200, "MONROE 1971", DIM_CYAN, 1);
+    fbScanlines();
+}
+
+void face_Lucid() {
+    fbClear(BLACK);
+    fbTextCenter(2, "LUCID", NEON_GREEN, 2);
+    fbShimmer(2, 18);
+    fbCircle(120, 90, 40, NEON_CYAN);
+    fbCircle(120, 90, 35, NEON_PURPLE);
+    if ((frame / 20) % 2 == 0) {
+        fbFillCircle(120, 90, 30, BLACK);
+        fbText(105, 82, "REM", NEON_GREEN, 1);
+    } else {
+        fbFillCircle(120, 90, 30, DIM_CYAN);
+        fbText(100, 82, "WAKE", NEON_GREEN, 1);
+    }
+    char buf[32];
+    int lucidity = 50 + sin(frame * 0.02) * 40;
+    sprintf(buf, "LUCID:%d%%", lucidity);
+    fbText(5, 160, buf, NEON_PINK, 1);
+    fbText(5, 180, "LABERGE 1985", DIM_CYAN, 1);
+    fbText(5, 200, "DREAM AWARE", NEON_CYAN, 1);
+    fbScanlines();
+}
+
+void face_OBE() {
+    fbClear(BLACK);
+    fbTextCenter(2, "OBE", NEON_CYAN, 2);
+    fbShimmer(2, 18);
+    int bodyX = 80, bodyY = 120;
+    fbRect(bodyX - 10, bodyY - 30, 20, 60, DIM_CYAN);
+    fbCircle(bodyX, bodyY - 40, 10, DIM_CYAN);
+    float separation = sin(frame * 0.03) * 30 + 40;
+    int spiritX = bodyX + separation;
+    int spiritY = bodyY - separation / 2;
+    fbRect(spiritX - 10, spiritY - 30, 20, 60, NEON_PURPLE);
+    fbCircle(spiritX, spiritY - 40, 10, NEON_PURPLE);
+    for (int i = 0; i < 5; i++) {
+        float t = i / 5.0;
+        fbPixel(bodyX + (spiritX - bodyX) * t, bodyY + (spiritY - bodyY) * t, NEON_PINK);
+    }
+    char buf[32];
+    sprintf(buf, "SEP:%.0fcm", separation * 2);
+    fbText(5, 180, buf, NEON_GREEN, 1);
+    fbText(5, 200, "BLANKE 2002", DIM_CYAN, 1);
+    fbText(5, 215, "TPJ RESEARCH", NEON_CYAN, 1);
+    fbScanlines();
+}
+
+void face_Debug() {
+    fbClear(BLACK);
+    fbText(10, 2, "TOUCH DEBUG", NEON_GREEN, 2);
+
+    char buf[48];
+
+    // Read live data using ft6336ReadData (reads 5 bytes from reg 0x02)
+    // LilyGO method: touchData[0]=TD_STATUS, [1-2]=X, [3-4]=Y
+    uint8_t vendorId = 0, chipId = 0, tdStatus = 0;
+    if (touchAddr && ft6336ReadData()) {
+        tdStatus = touchData[0] & 0x0F;  // Touch points now at index 0
+        vendorId = ft6336Read(FT6336_REG_VENDOR_ID);
+        chipId = ft6336Read(FT6336_REG_CHIP_ID);
+    }
+
+    // Show I2C devices found on touch bus
+    sprintf(buf, "I2C 39/40: %d devs", i2cFoundCount);
+    fbText(10, 22, buf, NEON_CYAN, 1);
+    for (int i = 0; i < i2cFoundCount && i < 4; i++) {
+        sprintf(buf, "%02X", i2cFound[i]);
+        fbText(130 + i * 25, 22, buf, NEON_GREEN, 1);
+    }
+
+    // Show touch controller status with vendor and chip ID
+    sprintf(buf, "VID:%02X CID:%02X %s", vendorId, chipId, touchAddr ? "OK" : "NO");
+    fbText(10, 38, buf, touchAddr ? NEON_GREEN : NEON_RED, 1);
+
+    // Show raw buffer data (first 8 bytes)
+    sprintf(buf, "RAW:%02X %02X %02X %02X", touchData[0], touchData[1], touchData[2], touchData[3]);
+    fbText(10, 52, buf, NEON_YELLOW, 1);
+    sprintf(buf, "    %02X %02X %02X %02X", touchData[4], touchData[5], touchData[6], touchData[7]);
+    fbText(10, 64, buf, NEON_YELLOW, 1);
+
+    // GPIO16 interrupt pin state
+    bool intState = digitalRead(TOUCH_INT);
+    sprintf(buf, "INT:%s TD:%d", intState ? "HIGH" : "LOW!", tdStatus);
+    fbText(10, 80, buf, intState ? DIM_CYAN : NEON_YELLOW, 1);
+
+    // Touch state - BIG display
+    sprintf(buf, "TOUCH: %s", touchPressed ? "YES!" : "NO");
+    fbText(10, 98, buf, touchPressed ? NEON_GREEN : WHITE, 2);
+
+    // Coordinates
+    sprintf(buf, "X:%3d Y:%3d", touchX, touchY);
+    fbText(10, 120, buf, NEON_CYAN, 2);
+
+    // Draw touch zone indicator
+    fbRect(10, 145, 220, 70, DIM_CYAN);
+    fbText(80, 148, "TOUCH AREA", DIM_GREEN, 1);
+
+    // Draw touch point if touching (scaled to box)
+    if (touchPressed || tdStatus > 0) {
+        // Map 0-240 to box area (10-230 x, 145-215 y)
+        int dx = 10 + (touchX * 220 / 240);
+        int dy = 145 + (touchY * 70 / 240);
+        if (dx > 10 && dx < 230 && dy > 145 && dy < 215) {
+            fbFillCircle(dx, dy, 8, NEON_RED);
+            fbCircle(dx, dy, 12, NEON_YELLOW);
+        }
+    }
+
+    // Swipe and face info
+    sprintf(buf, "SWP:%d FACE:%d BTN=NEXT", swipeDir, currentFace);
+    fbText(10, 222, buf, NEON_GREEN, 1);
+}
+
 void drawCurrentFace() {
     switch (currentFace) {
-        case 0: face_Clock(); break;
-        case 1: face_WalkieTalkie(); break;
-        case 2: face_Vitals(); break;
-        case 3: face_Radar(); break;
-        case 4: face_Proximity(); break;
-        case 5: face_Alien(); break;
-        case 6: face_RubbleDetector(); break;
-        case 7: face_Echolocation(); break;
-        case 8: face_HealthMap(); break;
-        case 9: face_TribeFinder(); break;
-        case 10: face_Radiation(); break;     // NEW
-        case 11: face_Drone(); break;
-        case 12: face_PartnerLoc(); break;
-        case 13: face_Bio(); break;
-        case 14: face_Profile(); break;
-        case 15: face_Neural(); break;
-        case 16: face_System(); break;
-        case 17: face_About(); break;
+        case 0: face_Debug(); break;  // Debug first for testing
+        case 1: face_Clock(); break;
+        case 2: face_WalkieTalkie(); break;
+        case 3: face_Vitals(); break;
+        case 4: face_Radar(); break;
+        case 5: face_Proximity(); break;
+        case 6: face_Alien(); break;
+        case 7: face_RubbleDetector(); break;
+        case 8: face_Echolocation(); break;
+        case 9: face_HealthMap(); break;
+        case 10: face_TribeFinder(); break;
+        case 11: face_Radiation(); break;
+        case 12: face_Drone(); break;
+        case 13: face_PartnerLoc(); break;
+        case 14: face_Bio(); break;
+        case 15: face_Profile(); break;
+        case 16: face_Neural(); break;
+        case 17: face_System(); break;
+        case 18: face_About(); break;
+        // NEW 40 SPECTACULAR FACES
+        case 19: face_BodyScanner(); break;
+        case 20: face_Sonar(); break;
+        case 21: face_Quantum(); break;
+        case 22: face_Ternary(); break;
+        case 23: face_NeuralNet(); break;
+        case 24: face_Brainwave(); break;
+        case 25: face_Chakra(); break;
+        case 26: face_Aura(); break;
+        case 27: face_Circadian(); break;
+        case 28: face_Electrodermal(); break;
+        case 29: face_DarkMatter(); break;
+        case 30: face_GravWave(); break;
+        case 31: face_Neutrino(); break;
+        case 32: face_Morphic(); break;
+        case 33: face_Timeline(); break;
+        case 34: face_Bioelectric(); break;
+        case 35: face_DNA(); break;
+        case 36: face_Holographic(); break;
+        case 37: face_Schrodinger(); break;
+        case 38: face_Entropy(); break;
+        case 39: face_Precognition(); break;
+        case 40: face_Telepathy(); break;
+        case 41: face_Akashic(); break;
+        case 42: face_Vortex(); break;
+        case 43: face_Plasma(); break;
+        case 44: face_Antimatter(); break;
+        case 45: face_StringTheory(); break;
+        case 46: face_Multiverse(); break;
+        case 47: face_ZeroPoint(); break;
+        case 48: face_Tachyon(); break;
+        case 49: face_Resonance(); break;
+        case 50: face_Synchronicity(); break;
+        case 51: face_Matrix(); break;
+        case 52: face_Simulation(); break;
+        case 53: face_Consciousness(); break;
+        case 54: face_Psi(); break;
+        case 55: face_Remote(); break;
+        case 56: face_Astral(); break;
+        case 57: face_Lucid(); break;
+        case 58: face_OBE(); break;
+        case 59: face_Triangulation(); break;  // Dual-watch target tracking
+        default: face_Debug(); break;
     }
     pushFramebuffer();
 }
@@ -2063,18 +5228,26 @@ void drawCurrentFace() {
 void setup() {
     Serial.begin(115200);
     delay(500);
+    Serial.println("HYPERLOG v15.0 BOOT");
 
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(400000);
+    Serial.println("I2C OK");
     initPMIC();
+    Serial.println("PMIC OK");
     delay(100);
 
     rtcWrite(21, 50, 0, 8, 1, 26);
+    Serial.println("RTC OK");
 
     initDisplay();
+    Serial.println("DISPLAY OK");
     initTouch();
+    Serial.println("TOUCH OK");
     initLoRa();
+    Serial.println("LORA OK");
     startSniffer();
+    Serial.println("SNIFFER OK");
 
     pinMode(BTN_1, INPUT_PULLUP);
 
@@ -2166,7 +5339,7 @@ void setup() {
         fbTextCenter(115, "HYPERLOG", NEON_PURPLE, 2);
         fbTextCenter(140, "BIOELECTRIC", NEON_CYAN, 2);
         fbTextCenter(165, "NEURAL OCEAN", NEON_GREEN, 2);
-        fbTextCenter(195, "V14.0", NEON_PINK, 2);
+        fbTextCenter(195, "V15.0", NEON_PINK, 2);
 
         // Laughing/winking text smiley synced with face
         const char* smileys[] = {":D", ";D", ":D", ";)"};
@@ -2199,73 +5372,98 @@ void loop() {
         if (swipeDir == -1) {  // Swipe left = next
             currentFace = (currentFace + 1) % TOTAL_FACES;
             lastFaceChange = millis();
+            Serial.println("Swipe: Next face");
         } else if (swipeDir == 1) {  // Swipe right = prev
             currentFace = (currentFace + TOTAL_FACES - 1) % TOTAL_FACES;
             lastFaceChange = millis();
+            Serial.println("Swipe: Prev face");
         }
     }
 
-    // Handle tap on specific faces
+    // Handle tap - any tap cycles to next face
     static bool lastTouchState = false;
+    static unsigned long touchStartTime = 0;
     if (touchPressed && !lastTouchState) {
-        // Tap detected
-        if (currentFace == 10) {  // Radiation face
-            // Toggle alert beep on tap
-            radiationAlertOn = !radiationAlertOn;
+        touchStartTime = millis();
+    }
+    if (!touchPressed && lastTouchState) {
+        // Touch released - check if it was a tap (short touch, no movement)
+        unsigned long touchDur = millis() - touchStartTime;
+        int dx = abs(touchX - lastTouchX);
+        int dy = abs(touchY - lastTouchY);
+        if (touchDur < 300 && dx < 30 && dy < 30) {
+            // Short tap with little movement = cycle face
+            currentFace = (currentFace + 1) % TOTAL_FACES;
+            lastFaceChange = millis();
+            Serial.println("Tap: Next face");
         }
     }
     lastTouchState = touchPressed;
 
-    // Handle button
-    bool btnPressed = (digitalRead(BTN_1) == LOW);
-
-    if (btnPressed && !btnWasPressed) {
-        btnPressStart = millis();
-        btnWasPressed = true;
+    // Handle PMU button (AXP2101)
+    if (readPMUButton()) {
+        currentFace = (currentFace + 1) % TOTAL_FACES;
+        lastFaceChange = millis();
+        Serial.println("Button: Next face");
     }
 
-    if (!btnPressed && btnWasPressed) {
-        unsigned long dur = millis() - btnPressStart;
-        btnWasPressed = false;
-
-        if (dur < 500) {
-            currentFace = (currentFace + 1) % TOTAL_FACES;
-            lastFaceChange = millis();
-        } else if (dur < 2000 && currentFace == 1 && hasNewMessage) {
-            hasNewMessage = false;
-        }
+    // Also check GPIO0 as fallback (some boards have it)
+    static bool gpio0Pressed = false;
+    bool gpio0State = (digitalRead(BTN_1) == LOW);
+    if (gpio0State && !gpio0Pressed) {
+        gpio0Pressed = true;
+    }
+    if (!gpio0State && gpio0Pressed) {
+        gpio0Pressed = false;
+        currentFace = (currentFace + 1) % TOTAL_FACES;
+        lastFaceChange = millis();
+        Serial.println("GPIO0: Next face");
     }
 
-    // Long press 2s = pairing (on walkie face) or ML learning (on rubble face)
-    if (btnPressed && btnWasPressed && (millis() - btnPressStart > 2000)) {
-        if (currentFace == 6 && !learningMode) {
-            // Rubble face: start TinyML learning at 30cm
-            learnMySignal();
-            btnWasPressed = false;
-        } else if (!pairingMode && !loraPaired && currentFace == 1) {
-            pairingMode = true;
-            pairingStart = millis();
+    // AUTO-PAIRING: Always try to pair when not paired
+    // Both watches search for each other continuously
+    if (!loraPaired) {
+        pairingMode = true;  // Always in pairing mode when unpaired
+        static unsigned long lastPairBeacon = 0;
+        if (millis() - lastPairBeacon > 2000) {
             sendPairRequest();
-            btnWasPressed = false;  // Reset to prevent re-trigger
+            lastPairBeacon = millis();
+            Serial.println("LoRa: Sending pair beacon...");
         }
     }
 
-    // Process LoRa
+    // Process LoRa messages
     processLoRa();
 
-    // Send location periodically when paired
+    // When paired, exchange data regularly
     static unsigned long lastLocSend = 0;
-    if (loraPaired && millis() - lastLocSend > 5000) {
-        sendLocation();
-        lastLocSend = millis();
-    }
+    static unsigned long lastSensorSend = 0;
+    static unsigned long lastHeartbeat = 0;
 
-    // Pairing beacon
-    if (pairingMode && millis() - pairingStart < 30000) {
-        static unsigned long lastBeacon = 0;
-        if (millis() - lastBeacon > 1000) {
-            sendPairRequest();
-            lastBeacon = millis();
+    if (loraPaired) {
+        // Send location every 5 seconds
+        if (millis() - lastLocSend > 5000) {
+            sendLocation();
+            lastLocSend = millis();
+        }
+
+        // Send sensor data every 3 seconds
+        if (millis() - lastSensorSend > 3000) {
+            sendSensorData();
+            lastSensorSend = millis();
+        }
+
+        // Send heartbeat every 2 seconds
+        if (millis() - lastHeartbeat > 2000) {
+            sendHeartbeat();
+            lastHeartbeat = millis();
+        }
+
+        // Check if partner went silent (unpair after 30s)
+        if (millis() - lastPartnerUpdate > 30000) {
+            loraPaired = false;
+            partnerSensors.valid = false;
+            Serial.println("LoRa: Partner timeout - unpairing");
         }
     }
 

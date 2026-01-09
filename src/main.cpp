@@ -35,14 +35,15 @@ TwoWire TouchWire = TwoWire(1);
 #define TFT_MOSI    13
 #define TFT_SCLK    18
 
-// LoRa SX1262
+// LoRa SX1262 - T-Watch S3 Plus pins (from LilyGO wiki)
+// https://wiki.lilygo.cc/get_started/en/Wearable/T-Watch-S3-PLUS/T-Watch-S3-PLUS.html
 #define LORA_MOSI   1
-#define LORA_MISO   3
-#define LORA_SCK    2
-#define LORA_CS     4
-#define LORA_RST    5
-#define LORA_BUSY   6
-#define LORA_DIO1   7
+#define LORA_MISO   4
+#define LORA_SCK    3
+#define LORA_CS     5
+#define LORA_RST    8
+#define LORA_BUSY   7
+#define LORA_DIO1   9
 
 // I2S Mic
 #define I2S_WS      9
@@ -1157,60 +1158,152 @@ uint8_t loraRead(uint8_t cmd) {
 }
 
 void initLoRa() {
+    Serial.println("Initializing SX1262 LoRa...");
+    Serial.printf("  Pins: MOSI=%d MISO=%d SCK=%d CS=%d RST=%d BUSY=%d DIO1=%d\n",
+                  LORA_MOSI, LORA_MISO, LORA_SCK, LORA_CS, LORA_RST, LORA_BUSY, LORA_DIO1);
+
     pinMode(LORA_CS, OUTPUT); pinMode(LORA_RST, OUTPUT);
     pinMode(LORA_BUSY, INPUT); pinMode(LORA_DIO1, INPUT);
     digitalWrite(LORA_CS, HIGH);
-    digitalWrite(LORA_RST, LOW); delay(10);
-    digitalWrite(LORA_RST, HIGH); delay(50);
-    loraSPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
-    loraSPI.setFrequency(10000000);
 
+    // Hard reset the SX1262
+    Serial.println("  Resetting SX1262...");
+    digitalWrite(LORA_RST, LOW); delay(20);
+    digitalWrite(LORA_RST, HIGH); delay(100);
+
+    loraSPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
+    loraSPI.setFrequency(8000000);
+
+    // Wait for busy to clear (with timeout)
+    Serial.print("  Waiting for BUSY...");
+    int busyWait = 0;
+    while (digitalRead(LORA_BUSY) && busyWait < 100) {
+        delay(10);
+        busyWait++;
+    }
+    if (busyWait >= 100) {
+        Serial.println(" TIMEOUT! SX1262 may not be present.");
+    } else {
+        Serial.printf(" OK (%dms)\n", busyWait * 10);
+    }
+
+    // Try to read device version to verify SX1262 is present
+    // GetStatus command (0xC0) should return status byte
+    Serial.print("  Checking SX1262 status...");
+    while (digitalRead(LORA_BUSY)) delay(1);
+    digitalWrite(LORA_CS, LOW);
+    loraSPI.transfer(0xC0);  // GetStatus
+    uint8_t status = loraSPI.transfer(0x00);
+    digitalWrite(LORA_CS, HIGH);
+    Serial.printf(" Status=0x%02X\n", status);
+
+    // SetStandby(STDBY_RC)
     uint8_t standby[] = {0x00}; loraWrite(0x80, standby, 1); delay(10);
+
+    // SetPacketType(LORA)
     uint8_t pkt[] = {0x01}; loraWrite(0x8A, pkt, 1);
+
+    // SetRfFrequency(868 MHz)
     uint32_t freq = (uint32_t)(868000000.0 * 33554432.0 / 32000000.0);
     uint8_t frf[] = {(uint8_t)(freq >> 24), (uint8_t)(freq >> 16), (uint8_t)(freq >> 8), (uint8_t)freq};
     loraWrite(0x86, frf, 4);
+    Serial.printf("  Frequency: 868MHz (0x%08X)\n", freq);
+
+    // SetPaConfig for SX1262: paDutyCycle=4, hpMax=7, deviceSel=0 (SX1262), paLut=1
     uint8_t pa[] = {0x04, 0x07, 0x00, 0x01}; loraWrite(0x95, pa, 4);
+
+    // SetTxParams: power=22dBm, rampTime=200us
     uint8_t tx[] = {0x16, 0x04}; loraWrite(0x8E, tx, 2);
+
+    // SetModulationParams: SF7, BW125, CR4/5, LowDataRateOptimize=OFF
     uint8_t mod[] = {0x07, 0x04, 0x01, 0x00}; loraWrite(0x8B, mod, 4);
 
+    // SetPacketParams: preamble=12, header=variable, payloadLen=255, CRC=on, invertIQ=off
+    uint8_t pktParams[] = {0x00, 0x0C, 0x00, 0xFF, 0x01, 0x00};
+    loraWrite(0x8C, pktParams, 6);
+
+    // SetDioIrqParams: enable RxDone and TxDone on DIO1
+    uint8_t dioIrq[] = {0xFF, 0xFF, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
+    loraWrite(0x08, dioIrq, 8);
+
+    // Start continuous RX mode
+    uint8_t rxcmd[] = {0xFF, 0xFF, 0xFF};
+    loraWrite(0x82, rxcmd, 3);
+
+    // Get unique ID from MAC
     uint8_t mac[6]; esp_read_mac(mac, ESP_MAC_WIFI_STA);
     pairID = (mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
+
+    Serial.printf("LoRa init complete! pairID: 0x%08X\n", pairID);
 }
 
 void loraSend(uint8_t* data, int len) {
-    uint8_t buf[256]; buf[0] = 0x00;
+    // Set to standby before TX
+    uint8_t standby[] = {0x00}; loraWrite(0x80, standby, 1);
+    while (digitalRead(LORA_BUSY)) delay(1);
+
+    // Write data to FIFO
+    uint8_t buf[256]; buf[0] = 0x00;  // Offset = 0
     memcpy(buf + 1, data, len);
     loraWrite(0x0E, buf, len + 1);
-    uint8_t params[] = {0x00, 0x08, (uint8_t)len, 0x01, 0x00};
-    loraWrite(0x8C, params, 5);
-    uint8_t txcmd[] = {0x00, 0x00, 0x00};
+
+    // Set payload length
+    uint8_t params[] = {0x00, 0x0C, 0x00, (uint8_t)len, 0x01, 0x00};
+    loraWrite(0x8C, params, 6);
+
+    // Clear IRQ
+    uint8_t clr[] = {0xFF, 0xFF}; loraWrite(0x02, clr, 2);
+
+    // Transmit
+    uint8_t txcmd[] = {0x00, 0x00, 0x00};  // No timeout
     loraWrite(0x83, txcmd, 3);
-    delay(50);
+
+    // Wait for TX done
+    for (int i = 0; i < 100; i++) {
+        uint8_t irq = loraRead(0x12);
+        if (irq & 0x01) break;  // TxDone
+        delay(5);
+    }
+
+    // Clear IRQ and return to RX mode
+    loraWrite(0x02, clr, 2);
+    uint8_t rxcmd[] = {0xFF, 0xFF, 0xFF};
+    loraWrite(0x82, rxcmd, 3);
 }
 
 int loraReceive(uint8_t* data, int maxLen) {
-    uint8_t rxcmd[] = {0xFF, 0xFF, 0xFF};
-    loraWrite(0x82, rxcmd, 3);
-    delay(50);
+    // Check IRQ status - bit 1 = RxDone
     uint8_t irq = loraRead(0x12);
     if (irq & 0x02) {
+        // Wait for busy
         while (digitalRead(LORA_BUSY)) delay(1);
+
+        // Get RX buffer status
         digitalWrite(LORA_CS, LOW);
         loraSPI.transfer(0x13); loraSPI.transfer(0x00);
         uint8_t len = loraSPI.transfer(0x00);
         uint8_t start = loraSPI.transfer(0x00);
         digitalWrite(LORA_CS, HIGH);
+
         if (len > 0 && len <= maxLen) {
+            // Read buffer
             while (digitalRead(LORA_BUSY)) delay(1);
             digitalWrite(LORA_CS, LOW);
             loraSPI.transfer(0x1E); loraSPI.transfer(start); loraSPI.transfer(0x00);
             for (int i = 0; i < len; i++) data[i] = loraSPI.transfer(0x00);
             digitalWrite(LORA_CS, HIGH);
+
+            // Get RSSI
             msgRSSI = -loraRead(0x14) / 2;
+
+            // Clear IRQ
             uint8_t clr[] = {0xFF, 0xFF}; loraWrite(0x02, clr, 2);
+
+            Serial.printf("LoRa RX: %d bytes, RSSI %d\n", len, msgRSSI);
             return len;
         }
+        // Clear IRQ even if invalid
+        uint8_t clr[] = {0xFF, 0xFF}; loraWrite(0x02, clr, 2);
     }
     return 0;
 }
@@ -5420,19 +5513,25 @@ void loop() {
         Serial.println("GPIO0: Next face");
     }
 
-    // AUTO-PAIRING: Always try to pair when not paired
-    // Both watches search for each other continuously
+    // AGGRESSIVE AUTO-PAIRING: Rapidly search for partner
+    // Random interval 200-500ms to avoid collision
     if (!loraPaired) {
-        pairingMode = true;  // Always in pairing mode when unpaired
+        pairingMode = true;
         static unsigned long lastPairBeacon = 0;
-        if (millis() - lastPairBeacon > 2000) {
+        static unsigned long nextInterval = 300;
+        if (millis() - lastPairBeacon > nextInterval) {
             sendPairRequest();
             lastPairBeacon = millis();
-            Serial.println("LoRa: Sending pair beacon...");
+            nextInterval = 200 + (esp_random() % 300);  // 200-500ms random
+            // Only log occasionally to avoid spam
+            static int beaconCount = 0;
+            if (++beaconCount % 10 == 0) {
+                Serial.printf("LoRa: Beacon #%d (interval %dms)\n", beaconCount, nextInterval);
+            }
         }
     }
 
-    // Process LoRa messages
+    // Process LoRa messages - ALWAYS check, even during TX
     processLoRa();
 
     // When paired, exchange data regularly

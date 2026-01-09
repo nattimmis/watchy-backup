@@ -87,7 +87,7 @@ float rssiToDistance(int rssi);
 
 // State
 int currentFace = 0;
-const int TOTAL_FACES = 61;  // 60 + crowd vitals scanner
+const int TOTAL_FACES = 81;  // 61-80 = Ilya Sutskever wow faces
 uint32_t frame = 0;
 
 // Calibration: Arm length from heart to wrist
@@ -946,23 +946,33 @@ void readTouch() {
     int rawY = ((touchData[5] & 0x0F) << 8) | touchData[6];
     bool intState = digitalRead(TOUCH_INT);
 
-    // ALTERNATIVE DETECTION: Use Event Flag instead of TD_STATUS
-    // Event 0x00 = Press Down (touch just started)
-    // Event 0x02 = Contact (finger still touching and moving)
-    // Event 0x01 = Lift Up (touch ended)
-    // BUT: Event=0 with coordinates (0,0) is just the default state, not a real touch!
-    bool validCoords = (rawX > 0 || rawY > 0) && (rawX <= 240 && rawY <= 240);
-    bool touchActive = validCoords && (eventFlag == 0x00 || eventFlag == 0x02);
+    // SIMPLE DETECTION: Valid coordinates = touch active
+    // This watch returns coordinates even when TD_STATUS=0
+    bool validCoords = (rawX > 5 && rawX < 235 && rawY > 5 && rawY < 235);
 
-    // Track coordinate changes (indicates touch even if TD=0)
+    // Track coordinate changes
     static int lastRawX = 0, lastRawY = 0;
+    static unsigned long lastCoordChange = 0;
     bool coordChanged = (rawX != lastRawX || rawY != lastRawY);
-
-    // Use event flag OR td_status OR INT pin to determine touch count
-    uint8_t numPoints = tdStatus;
-    if (numPoints == 0 && touchActive) {
-        numPoints = 1;  // Event flag indicates touch even if TD_STATUS is 0
+    if (coordChanged && validCoords) {
+        lastCoordChange = millis();
     }
+
+    // Touch is active if:
+    // 1. TD_STATUS > 0, OR
+    // 2. Event is down(0) or contact(2), OR
+    // 3. Coordinates recently changed (within 200ms)
+    bool recentActivity = (millis() - lastCoordChange < 200);
+    uint8_t numPoints = tdStatus;
+    if (numPoints == 0 && validCoords && (eventFlag != 1 || recentActivity)) {
+        numPoints = 1;
+    }
+
+    // Fallback: INT low with valid coords
+    if (numPoints == 0 && !intState && validCoords) {
+        numPoints = 1;
+    }
+
     // If INT is LOW but no data, assume touch at center (failsafe)
     if (numPoints == 0 && !intState && rawX == 0 && rawY == 0) {
         // INT is triggered but no coordinates - could be a quick tap
@@ -973,14 +983,12 @@ void readTouch() {
         Serial.println("T: INT-based touch detect (no coords)");
     }
 
-    // Debug output when coords change or periodically (with raw data dump)
-    if (millis() - lastTouchDebug > 2000 || coordChanged || numPoints > 0 || !intState || touchActive) {
+    // Debug output when coords change or periodically
+    if (millis() - lastTouchDebug > 2000 || coordChanged || numPoints > 0 || !intState) {
         if (touchDebugCount < 100 || coordChanged || numPoints > 0) {
-            Serial.printf("T: INT=%s TD=%d Ev=%d (%d,%d) raw[%02X %02X %02X %02X %02X %02X %02X %02X]%s\n",
+            Serial.printf("T: INT=%s TD=%d Ev=%d (%d,%d) np=%d%s\n",
                           intState ? "H" : "L", tdStatus, eventFlag, rawX, rawY,
-                          touchData[0], touchData[1], touchData[2], touchData[3],
-                          touchData[4], touchData[5], touchData[6], touchData[7],
-                          touchActive ? " TOUCH!" : "");
+                          numPoints, numPoints > 0 ? " TOUCH!" : "");
             touchDebugCount++;
         }
         lastTouchDebug = millis();
@@ -1030,29 +1038,32 @@ void readTouch() {
         }
     }
 
+    // SIMPLE: Just track touch state directly
     bool wasPressed = touchPressed;
     touchPressed = (numPoints > 0);
 
     if (touchPressed) {
-        if (!wasPressed) {
-            // New touch started
-            lastTouchX = newX;
-            lastTouchY = newY;
-        }
         touchX = newX;
         touchY = newY;
+        if (!wasPressed) {
+            lastTouchX = newX;
+            lastTouchY = newY;
+            Serial.printf("TOUCH START at (%d,%d)\n", newX, newY);
+        }
     } else if (wasPressed) {
-        // Touch released - check for swipe gesture
+        // Touch just released
         int dx = touchX - lastTouchX;
         int dy = touchY - lastTouchY;
+        Serial.printf("TOUCH END dx=%d dy=%d\n", dx, dy);
 
-        if (abs(dx) > 50 || abs(dy) > 50) {
+        if (abs(dx) > 40 || abs(dy) > 40) {
             swipeDetected = true;
             if (abs(dx) > abs(dy)) {
-                swipeDir = (dx > 0) ? 1 : -1;  // Right / Left
+                swipeDir = (dx > 0) ? 1 : -1;
             } else {
-                swipeDir = (dy > 0) ? 2 : -2;  // Down / Up
+                swipeDir = (dy > 0) ? 2 : -2;
             }
+            Serial.printf("SWIPE dir=%d\n", swipeDir);
         }
     }
 }
@@ -1785,8 +1796,13 @@ void processLoRa() {
         memcpy(&fromID, buf + 1, 4);
         partnerRSSI = msgRSSI;  // Store RSSI of last partner message
 
+        // DEBUG: Show what we received
+        Serial.printf("LoRa MSG: type=0x%02X from=%08X pair=%d mode=%d\n",
+                      type, fromID, loraPaired, pairingMode);
+
         switch (type) {
             case MSG_PAIR_REQ:
+                Serial.printf("PAIR_REQ: pairingMode=%d loraPaired=%d\n", pairingMode, loraPaired);
                 if (pairingMode && !loraPaired) {
                     uint8_t ack[8]; ack[0] = MSG_PAIR_ACK;
                     memcpy(ack + 1, &pairID, 4);
@@ -1794,6 +1810,8 @@ void processLoRa() {
                     partnerID = fromID;
                     loraPaired = true;
                     pairingMode = false;
+                    lastPartnerUpdate = millis();  // FIX: Set timestamp on pair!
+                    Serial.println("LoRa: PAIRED via REQ!");
                 }
                 break;
 
@@ -1802,6 +1820,8 @@ void processLoRa() {
                     partnerID = fromID;
                     loraPaired = true;
                     pairingMode = false;
+                    lastPartnerUpdate = millis();  // FIX: Set timestamp on pair!
+                    Serial.println("LoRa: PAIRED via ACK!");
                 }
                 break;
 
@@ -2580,6 +2600,547 @@ void face_CrowdVitals() {
         for (int y = 2; y < 14; y++) fbLine(200, y, 238, y, NEON_GREEN);
         fbText(202, 3, "SYNC", BLACK, 1);
     }
+}
+
+// ============= ILYA SUTSKEVER WOW FACES =============
+// 20+ faces that would impress the co-founder of OpenAI
+
+// 61: Metal Detector - WiFi signal anomaly = metal
+void face_MetalDetect() {
+    static int metalLevel = 0;
+    static unsigned long lastBeep = 0;
+
+    // Detect metal via WiFi signal anomalies (ferrous metals distort RF)
+    int anomaly = 0;
+    for (int i = 0; i < entityCount; i++) {
+        if (entities[i].rssi > -30) anomaly += 20;  // Very close = suspicious
+    }
+    metalLevel = (metalLevel * 3 + anomaly) / 4;  // Smooth
+
+    // Flash screen if metal detected
+    uint16_t bg = metalLevel > 30 ? NEON_RED : BLACK;
+    if (metalLevel > 50 && (frame % 10 < 5)) bg = NEON_YELLOW;
+    fbClear(bg);
+
+    fbTextCenter(10, "METAL DETECTOR", NEON_CYAN, 2);
+    char buf[32];
+    sprintf(buf, "LEVEL: %d", metalLevel);
+    fbTextCenter(50, buf, metalLevel > 30 ? NEON_RED : NEON_GREEN, 3);
+
+    // Detector needle
+    int needleAngle = metalLevel * 180 / 100;
+    int nx = 120 + 60 * cos((180 - needleAngle) * 3.14159 / 180);
+    int ny = 150 - 60 * sin((180 - needleAngle) * 3.14159 / 180);
+    fbLine(120, 150, nx, ny, NEON_RED);
+    fbCircle(120, 150, 65, NEON_CYAN);
+
+    fbText(30, 145, "SAFE", NEON_GREEN, 1);
+    fbText(180, 145, "METAL", NEON_RED, 1);
+    fbTextCenter(220, "Wave near metal objects", DIM_CYAN, 1);
+}
+
+// 62: Transformer Visualizer - live inference visualization
+void face_Transformer() {
+    fbClear(BLACK);
+    fbTextCenter(2, "TRANSFORMER", NEON_PURPLE, 2);
+
+    // Draw neurons in layers
+    int layers[] = {4, 6, 6, 3};
+    int layerX[] = {30, 90, 150, 210};
+
+    for (int l = 0; l < 4; l++) {
+        for (int n = 0; n < layers[l]; n++) {
+            int y = 50 + n * (140 / layers[l]);
+            int activation = (sin(frame * 0.1 + l + n) + 1) * 127;
+            uint16_t col = (activation > 128) ? NEON_GREEN : DIM_CYAN;
+            fbFillCircle(layerX[l], y, 8, col);
+
+            // Draw connections to next layer
+            if (l < 3) {
+                for (int nn = 0; nn < layers[l+1]; nn++) {
+                    int ny = 50 + nn * (140 / layers[l+1]);
+                    if ((n + nn + frame/10) % 3 == 0) {
+                        fbLine(layerX[l]+8, y, layerX[l+1]-8, ny, GRID_DIM);
+                    }
+                }
+            }
+        }
+    }
+
+    fbText(10, 200, "INPUT", DIM_CYAN, 1);
+    fbText(85, 200, "HIDDEN", DIM_CYAN, 1);
+    fbText(180, 200, "OUT", DIM_CYAN, 1);
+    fbTextCenter(220, "Transformer attention: ON", NEON_GREEN, 1);
+}
+
+// 63: GPT Token Stream - simulated LLM inference
+void face_GPTStream() {
+    fbClear(BLACK);
+    fbTextCenter(2, "LLM STREAM", NEON_CYAN, 2);
+
+    const char* tokens[] = {"The", "future", "of", "AI", "is", "superintelligence",
+                            "We", "must", "align", "values", "with", "humanity"};
+    int tokenCount = 12;
+
+    for (int i = 0; i < 8; i++) {
+        int idx = (frame / 15 + i) % tokenCount;
+        int y = 30 + i * 22;
+        uint16_t col = (i == 0) ? NEON_GREEN : ((i < 3) ? NEON_CYAN : DIM_CYAN);
+        fbText(10, y, tokens[idx], col, 2);
+    }
+
+    char buf[32];
+    sprintf(buf, "TOKENS/S: %d", 45 + (frame % 20));
+    fbText(10, 210, buf, NEON_GREEN, 1);
+    fbText(140, 210, "TEMP:0.7", NEON_ORANGE, 1);
+}
+
+// 64: Attention Heatmap - transformer attention visualization
+void face_Attention() {
+    fbClear(BLACK);
+    fbTextCenter(2, "ATTENTION", NEON_PURPLE, 2);
+
+    // Draw 8x8 attention grid
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+            float attn = (sin(frame * 0.05 + i * 0.5 + j * 0.3) + 1) / 2;
+            int bright = attn * 31;
+            uint16_t col = (bright << 11) | (bright << 1);  // Red-ish
+            int x = 40 + j * 20;
+            int y = 30 + i * 20;
+            for (int dy = 0; dy < 18; dy++)
+                for (int dx = 0; dx < 18; dx++)
+                    fbPixel(x + dx, y + dy, col);
+        }
+    }
+
+    fbText(10, 200, "Q", NEON_CYAN, 2);
+    fbText(220, 100, "K", NEON_GREEN, 2);
+    fbTextCenter(220, "Self-attention layer 12", DIM_CYAN, 1);
+}
+
+// 65: Gradient Descent - optimization visualization
+void face_Gradient() {
+    fbClear(BLACK);
+    fbTextCenter(2, "GRADIENT", NEON_GREEN, 2);
+
+    // Draw loss landscape
+    for (int x = 20; x < 220; x++) {
+        float fx = (x - 120) / 50.0;
+        int y = 120 + 40 * (fx * fx - 0.5 * cos(fx * 5));
+        y = (y < 40) ? 40 : ((y > 200) ? 200 : y);
+        fbPixel(x, y, NEON_CYAN);
+        fbPixel(x, y+1, NEON_CYAN);
+    }
+
+    // Ball rolling down
+    int ballX = 60 + (frame % 160);
+    float bfx = (ballX - 120) / 50.0;
+    int ballY = 120 + 40 * (bfx * bfx - 0.5 * cos(bfx * 5)) - 8;
+    fbFillCircle(ballX, ballY, 6, NEON_RED);
+
+    char buf[32];
+    sprintf(buf, "LOSS: %.4f", bfx * bfx + 0.1);
+    fbText(10, 210, buf, NEON_GREEN, 1);
+    fbText(130, 210, "LR:0.001", NEON_ORANGE, 1);
+}
+
+// 66: Emergent Behavior - complexity from simplicity
+void face_Emergent() {
+    fbClear(BLACK);
+    fbTextCenter(2, "EMERGENCE", NEON_PURPLE, 2);
+
+    // Boids-like particles
+    static float px[20], py[20], vx[20], vy[20];
+    static bool init = false;
+    if (!init) {
+        for (int i = 0; i < 20; i++) {
+            px[i] = 60 + (i % 5) * 30;
+            py[i] = 60 + (i / 5) * 30;
+            vx[i] = (i % 3) - 1;
+            vy[i] = (i % 2) - 0.5;
+        }
+        init = true;
+    }
+
+    // Update and draw
+    for (int i = 0; i < 20; i++) {
+        px[i] += vx[i];
+        py[i] += vy[i];
+        if (px[i] < 20 || px[i] > 220) vx[i] *= -1;
+        if (py[i] < 30 || py[i] > 200) vy[i] *= -1;
+        fbFillCircle(px[i], py[i], 4, NEON_CYAN);
+    }
+
+    fbTextCenter(220, "Simple rules -> Complex behavior", DIM_CYAN, 1);
+}
+
+// 67: Scaling Laws - compute vs capability
+void face_Scaling() {
+    fbClear(BLACK);
+    fbTextCenter(2, "SCALING LAWS", NEON_CYAN, 2);
+
+    // Draw log-log plot
+    for (int x = 30; x < 210; x++) {
+        int y = 180 - (x - 30) * 0.7;
+        fbPixel(x, y, NEON_GREEN);
+        fbPixel(x, y+1, NEON_GREEN);
+    }
+
+    // Axes
+    fbLine(30, 180, 210, 180, WHITE);
+    fbLine(30, 40, 30, 180, WHITE);
+
+    fbText(80, 190, "COMPUTE (FLOPS)", DIM_CYAN, 1);
+    fbText(5, 100, "L", WHITE, 1);
+    fbText(5, 110, "O", WHITE, 1);
+    fbText(5, 120, "S", WHITE, 1);
+    fbText(5, 130, "S", WHITE, 1);
+
+    // Current position
+    int dotX = 30 + (frame % 180);
+    int dotY = 180 - (dotX - 30) * 0.7;
+    fbFillCircle(dotX, dotY, 5, NEON_RED);
+
+    fbTextCenter(220, "Kaplan et al. 2020", DIM_CYAN, 1);
+}
+
+// 68: Information Theory - Shannon entropy visualization
+void face_Shannon() {
+    fbClear(BLACK);
+    fbTextCenter(2, "ENTROPY", NEON_GREEN, 2);
+
+    // Shannon entropy bar
+    float entropy = 2.5 + sin(frame * 0.03) * 1.5;
+    int barW = entropy * 40;
+    for (int y = 50; y < 80; y++) fbLine(20, y, 20 + barW, y, NEON_CYAN);
+    fbRect(20, 50, 200, 30, WHITE);
+
+    char buf[32];
+    sprintf(buf, "H = %.2f bits", entropy);
+    fbText(70, 90, buf, NEON_GREEN, 2);
+
+    // Binary stream
+    for (int i = 0; i < 20; i++) {
+        int bit = ((frame + i * 7) % 13) > 6 ? 1 : 0;
+        fbText(20 + i * 11, 130, bit ? "1" : "0", bit ? NEON_GREEN : DIM_CYAN, 1);
+    }
+
+    fbTextCenter(160, "Information content", DIM_CYAN, 1);
+    fbTextCenter(180, "Shannon 1948", DIM_CYAN, 1);
+}
+
+// 69: Kolmogorov Complexity - shortest program
+void face_Kolmogorov() {
+    fbClear(BLACK);
+    fbTextCenter(2, "COMPLEXITY", NEON_PURPLE, 2);
+
+    // Pattern with low K-complexity (repetitive)
+    fbText(10, 40, "ABABABABABABAB", NEON_GREEN, 1);
+    fbText(10, 55, "K(x) = 14 bits", DIM_CYAN, 1);
+
+    // Pattern with high K-complexity (random)
+    fbText(10, 90, "J7X2QM9L4FPK1R", NEON_RED, 1);
+    fbText(10, 105, "K(x) = 112 bits", DIM_CYAN, 1);
+
+    // Compression ratio bar
+    fbText(10, 140, "Compression:", WHITE, 1);
+    fbRect(10, 155, 200, 15, WHITE);
+    int comp = 50 + sin(frame * 0.05) * 30;
+    for (int y = 156; y < 169; y++) fbLine(11, y, 10 + comp * 2, y, NEON_CYAN);
+
+    fbTextCenter(200, "Incompressible = Random", DIM_CYAN, 1);
+    fbTextCenter(220, "Solomonoff 1964", DIM_CYAN, 1);
+}
+
+// 70: Alignment Problem - value learning
+void face_Alignment() {
+    fbClear(BLACK);
+    fbTextCenter(2, "ALIGNMENT", NEON_RED, 2);
+
+    // Human values circle
+    fbCircle(80, 100, 50, NEON_CYAN);
+    fbText(55, 95, "HUMAN", WHITE, 1);
+    fbText(55, 107, "VALUES", WHITE, 1);
+
+    // AI values circle (overlapping)
+    int overlap = 30 + sin(frame * 0.02) * 20;
+    fbCircle(80 + overlap, 100, 50, NEON_GREEN);
+    fbText(80 + overlap - 15, 95, "AI", WHITE, 1);
+    fbText(80 + overlap - 25, 107, "VALUES", WHITE, 1);
+
+    char buf[32];
+    int alignPct = 100 - overlap;
+    sprintf(buf, "ALIGNMENT: %d%%", alignPct);
+    fbTextCenter(170, buf, alignPct > 70 ? NEON_GREEN : NEON_RED, 2);
+
+    fbTextCenter(200, "Goal: Maximize overlap", DIM_CYAN, 1);
+    fbTextCenter(220, "Russell 2019", DIM_CYAN, 1);
+}
+
+// 71: Superposition - feature representation
+void face_Superposition() {
+    fbClear(BLACK);
+    fbTextCenter(2, "SUPERPOSITION", NEON_CYAN, 2);
+
+    // Multiple features encoded in same neurons
+    for (int f = 0; f < 5; f++) {
+        float phase = frame * 0.1 + f * 1.2;
+        int cx = 120 + 40 * cos(phase);
+        int cy = 100 + 40 * sin(phase);
+        uint16_t col = (f == 0) ? NEON_RED : ((f == 1) ? NEON_GREEN : ((f == 2) ? NEON_CYAN : NEON_PURPLE));
+        fbCircle(cx, cy, 20, col);
+    }
+
+    fbText(10, 170, "Features: 1000", NEON_GREEN, 1);
+    fbText(10, 185, "Neurons: 100", NEON_ORANGE, 1);
+    fbText(10, 200, "Ratio: 10x", NEON_RED, 1);
+    fbTextCenter(220, "Anthropic 2022", DIM_CYAN, 1);
+}
+
+// 72: Flight Mode - altitude, speed, time zones
+void face_Flight() {
+    fbClear(BLACK);
+    fbTextCenter(2, "FLIGHT MODE", NEON_CYAN, 2);
+
+    // Simulated altitude
+    int alt = 35000 + sin(frame * 0.01) * 2000;
+    char buf[40];
+    sprintf(buf, "ALT: %d FT", alt);
+    fbText(10, 35, buf, NEON_GREEN, 2);
+
+    // Ground speed
+    int speed = 480 + sin(frame * 0.02) * 30;
+    sprintf(buf, "GND SPD: %d KTS", speed);
+    fbText(10, 65, buf, NEON_CYAN, 1);
+
+    // ETA countdown
+    int eta = 180 - (frame / 60) % 180;
+    sprintf(buf, "ETA: %dh %02dm", eta / 60, eta % 60);
+    fbText(10, 85, buf, NEON_ORANGE, 2);
+
+    // Time zones
+    fbLine(0, 120, 240, 120, GRID_DIM);
+    fbText(10, 125, "DEP: ZRH 14:30", DIM_CYAN, 1);
+    fbText(10, 140, "ARR: SFO 17:45", DIM_CYAN, 1);
+    fbText(10, 155, "LOCAL: 23:15", NEON_GREEN, 2);
+
+    // Mini plane
+    int px = (frame * 2) % 220 + 10;
+    fbText(px, 180, ">", NEON_CYAN, 2);
+    fbLine(10, 185, 230, 185, GRID_DIM);
+
+    fbText(10, 205, "WiFi: ON", NEON_GREEN, 1);
+    fbText(100, 205, "LoRa: PAIRED", NEON_GREEN, 1);
+}
+
+// 73: Jet Lag Calculator
+void face_JetLag() {
+    fbClear(BLACK);
+    fbTextCenter(2, "JET LAG", NEON_ORANGE, 2);
+
+    int tzDiff = 9;  // ZRH to SFO
+    char buf[40];
+    sprintf(buf, "TIME ZONES: %d", tzDiff);
+    fbTextCenter(40, buf, WHITE, 2);
+
+    // Recovery estimate (1 day per TZ)
+    sprintf(buf, "RECOVERY: %d DAYS", tzDiff);
+    fbTextCenter(75, buf, NEON_RED, 2);
+
+    // Circadian phase
+    fbText(10, 110, "CIRCADIAN PHASE:", DIM_CYAN, 1);
+    int phase = (frame / 30) % 24;
+    fbRect(10, 125, 200, 20, WHITE);
+    for (int y = 126; y < 144; y++) {
+        fbLine(11, y, 10 + phase * 8, y, phase < 8 ? NEON_GREEN : (phase < 16 ? NEON_ORANGE : NEON_RED));
+    }
+
+    fbText(10, 160, "ADVICE:", NEON_CYAN, 1);
+    fbText(10, 175, "- Light exposure AM", NEON_GREEN, 1);
+    fbText(10, 190, "- Melatonin 3mg PM", NEON_GREEN, 1);
+    fbText(10, 205, "- No caffeine 6h pre", NEON_GREEN, 1);
+    fbTextCenter(225, "Eastman 2005", DIM_CYAN, 1);
+}
+
+// 74: Meditation Timer - with HRV feedback
+void face_Meditate() {
+    fbClear(BLACK);
+
+    // Breathing circle
+    float breathPhase = sin(frame * 0.05);
+    int radius = 50 + breathPhase * 20;
+    fbCircle(120, 100, radius, NEON_CYAN);
+    fbCircle(120, 100, radius - 2, NEON_CYAN);
+
+    fbTextCenter(2, breathPhase > 0 ? "INHALE" : "EXHALE", NEON_GREEN, 2);
+
+    char buf[32];
+    sprintf(buf, "HRV: %d ms", hrv);
+    fbText(10, 180, buf, NEON_CYAN, 1);
+    sprintf(buf, "HR: %d BPM", heartRate);
+    fbText(130, 180, buf, NEON_GREEN, 1);
+
+    // Session timer
+    int secs = (frame / 60) % 600;
+    sprintf(buf, "%d:%02d", secs / 60, secs % 60);
+    fbTextCenter(200, buf, WHITE, 3);
+
+    fbTextCenter(225, "Coherent breathing 5.5/min", DIM_CYAN, 1);
+}
+
+// 75: Idea Capture - quick voice/tap notes
+void face_Ideas() {
+    fbClear(BLACK);
+    fbTextCenter(2, "IDEA CAPTURE", NEON_PURPLE, 2);
+
+    fbText(10, 35, "TAP TO CAPTURE:", NEON_CYAN, 1);
+
+    // Simulated ideas list
+    const char* ideas[] = {
+        "1. Scaling hypothesis",
+        "2. Bitter lesson",
+        "3. Mesa-optimization",
+        "4. Instrumental goals"
+    };
+    for (int i = 0; i < 4; i++) {
+        fbText(10, 55 + i * 20, ideas[i], NEON_GREEN, 1);
+    }
+
+    fbLine(0, 140, 240, 140, GRID_DIM);
+    fbText(10, 150, "RECENT:", DIM_CYAN, 1);
+    fbText(10, 170, "Emergence in LLMs", NEON_ORANGE, 1);
+    fbText(10, 185, "Phase transitions", NEON_ORANGE, 1);
+
+    // Counter
+    char buf[20];
+    sprintf(buf, "IDEAS: %d", 47 + (frame / 100));
+    fbText(150, 210, buf, NEON_GREEN, 1);
+}
+
+// 76: Reading List - papers/books queue
+void face_ReadingList() {
+    fbClear(BLACK);
+    fbTextCenter(2, "READING QUEUE", NEON_CYAN, 2);
+
+    const char* papers[] = {
+        "Attention Is All You",
+        "GPT-4 Technical Rep",
+        "Constitutional AI",
+        "Chinchilla Scaling",
+        "InstructGPT",
+        "RLHF Survey"
+    };
+    for (int i = 0; i < 6; i++) {
+        int y = 30 + i * 28;
+        fbRect(5, y, 230, 25, (i == 0) ? NEON_GREEN : GRID_DIM);
+        fbText(10, y + 5, papers[i], (i == 0) ? WHITE : DIM_CYAN, 1);
+    }
+
+    fbText(10, 210, "SWIPE to mark read", NEON_ORANGE, 1);
+}
+
+// 77: Pomodoro Timer - deep work
+void face_Pomodoro() {
+    fbClear(BLACK);
+    fbTextCenter(2, "DEEP WORK", NEON_RED, 2);
+
+    // Timer circle
+    int remaining = 25 * 60 - (frame % (25 * 60));
+    float pct = remaining / (25.0 * 60);
+    int angle = pct * 360;
+
+    fbCircle(120, 110, 60, GRID_DIM);
+    for (int a = 0; a < angle; a += 2) {
+        int x = 120 + 55 * cos((a - 90) * 3.14159 / 180);
+        int y = 110 + 55 * sin((a - 90) * 3.14159 / 180);
+        fbPixel(x, y, NEON_RED);
+    }
+
+    char buf[20];
+    sprintf(buf, "%d:%02d", remaining / 60, remaining % 60);
+    fbTextCenter(100, buf, WHITE, 3);
+
+    fbText(10, 180, "SESSION: 3/4", NEON_GREEN, 1);
+    fbText(10, 195, "FOCUS: Research", DIM_CYAN, 1);
+    fbTextCenter(220, "Newport 2016", DIM_CYAN, 1);
+}
+
+// 78: Sleep Optimizer - circadian tracking
+void face_SleepOpt() {
+    fbClear(BLACK);
+    fbTextCenter(2, "SLEEP OPT", NEON_PURPLE, 2);
+
+    // Sleep stages graph
+    int stages[] = {3, 2, 1, 2, 3, 4, 3, 2, 1, 2, 3, 4, 3, 2};
+    for (int i = 0; i < 14; i++) {
+        int x = 15 + i * 15;
+        int h = stages[i] * 20;
+        for (int y = 150 - h; y < 150; y++) fbLine(x, y, x + 12, y, NEON_CYAN);
+    }
+
+    fbText(10, 155, "WAKE  REM  LIGHT  DEEP", DIM_CYAN, 1);
+
+    char buf[32];
+    sprintf(buf, "SCORE: %d/100", sleepScore);
+    fbText(10, 40, buf, sleepScore > 70 ? NEON_GREEN : NEON_ORANGE, 2);
+
+    fbText(10, 70, "BED: 23:00", NEON_CYAN, 1);
+    fbText(120, 70, "WAKE: 07:00", NEON_CYAN, 1);
+    fbText(10, 90, "CYCLES: 5", NEON_GREEN, 1);
+
+    fbTextCenter(220, "Walker 2017", DIM_CYAN, 1);
+}
+
+// 79: Cognitive Load - NASA-TLX simplified
+void face_CogLoad() {
+    fbClear(BLACK);
+    fbTextCenter(2, "COGNITIVE LOAD", NEON_ORANGE, 2);
+
+    const char* dims[] = {"Mental", "Physical", "Temporal", "Effort", "Frustration"};
+    int vals[] = {75, 20, 60, 80, 30};
+
+    for (int i = 0; i < 5; i++) {
+        int y = 35 + i * 32;
+        fbText(10, y, dims[i], DIM_CYAN, 1);
+        fbRect(80, y, 140, 12, WHITE);
+        int barW = vals[i] * 138 / 100;
+        uint16_t col = vals[i] > 70 ? NEON_RED : (vals[i] > 40 ? NEON_ORANGE : NEON_GREEN);
+        for (int by = y + 1; by < y + 11; by++) fbLine(81, by, 80 + barW, by, col);
+    }
+
+    int total = (vals[0] + vals[1] + vals[2] + vals[3] + vals[4]) / 5;
+    char buf[20];
+    sprintf(buf, "TOTAL: %d%%", total);
+    fbTextCenter(200, buf, total > 60 ? NEON_RED : NEON_GREEN, 2);
+    fbTextCenter(225, "NASA-TLX Hart 1988", DIM_CYAN, 1);
+}
+
+// 80: Quick Math - mental arithmetic trainer
+void face_QuickMath() {
+    fbClear(BLACK);
+    fbTextCenter(2, "QUICK MATH", NEON_GREEN, 2);
+
+    static int a = 0, b = 0, op = 0, answer = 0;
+    if (frame % 300 == 0 || a == 0) {
+        a = 10 + (frame % 40);
+        b = 5 + (frame % 20);
+        op = (frame / 300) % 3;
+        answer = (op == 0) ? a + b : ((op == 1) ? a - b : a * b);
+    }
+
+    char buf[40];
+    sprintf(buf, "%d %c %d = ?", a, op == 0 ? '+' : (op == 1 ? '-' : 'x'), b);
+    fbTextCenter(80, buf, WHITE, 3);
+
+    // Countdown bar
+    int timeLeft = 300 - (frame % 300);
+    fbRect(20, 140, 200, 20, WHITE);
+    for (int y = 141; y < 159; y++) fbLine(21, y, 20 + timeLeft * 200 / 300, y, timeLeft > 100 ? NEON_GREEN : NEON_RED);
+
+    fbTextCenter(180, "TAP when you know", DIM_CYAN, 1);
+    sprintf(buf, "STREAK: %d", frame / 300);
+    fbText(10, 210, buf, NEON_CYAN, 1);
 }
 
 void face_Vitals() {
@@ -5699,6 +6260,27 @@ void drawCurrentFace() {
         case 58: face_OBE(); break;
         case 59: face_Triangulation(); break;  // Dual-watch target tracking
         case 60: face_CrowdVitals(); break;   // Crowd vitals scanner
+        // Ilya Sutskever wow faces
+        case 61: face_MetalDetect(); break;   // Metal detector
+        case 62: face_Transformer(); break;   // Transformer viz
+        case 63: face_GPTStream(); break;     // LLM token stream
+        case 64: face_Attention(); break;     // Attention heatmap
+        case 65: face_Gradient(); break;      // Gradient descent
+        case 66: face_Emergent(); break;      // Emergent behavior
+        case 67: face_Scaling(); break;       // Scaling laws
+        case 68: face_Shannon(); break;       // Information theory
+        case 69: face_Kolmogorov(); break;    // Kolmogorov complexity
+        case 70: face_Alignment(); break;     // AI alignment
+        case 71: face_Superposition(); break; // Feature superposition
+        case 72: face_Flight(); break;        // Flight mode
+        case 73: face_JetLag(); break;        // Jet lag calculator
+        case 74: face_Meditate(); break;      // Meditation timer
+        case 75: face_Ideas(); break;         // Idea capture
+        case 76: face_ReadingList(); break;   // Reading queue
+        case 77: face_Pomodoro(); break;      // Deep work timer
+        case 78: face_SleepOpt(); break;      // Sleep optimizer
+        case 79: face_CogLoad(); break;       // Cognitive load
+        case 80: face_QuickMath(); break;     // Mental math
         default: face_Debug(); break;
     }
 
@@ -5868,31 +6450,36 @@ void loop() {
         }
     }
 
-    // Handle tap - detail popup or cycle face
+    // Handle tap - SIMPLE: any tap = next face (swipe already handled above)
     static bool lastTouchState = false;
     static unsigned long touchStartTime = 0;
     static int tapStartX = 0, tapStartY = 0;
+
     if (touchPressed && !lastTouchState) {
+        // Touch just started
         touchStartTime = millis();
         tapStartX = touchX;
         tapStartY = touchY;
     }
-    if (!touchPressed && lastTouchState) {
-        // Touch released - check if it was a tap (short touch, no movement)
+
+    if (!touchPressed && lastTouchState && !swipeDetected) {
+        // Touch just released and wasn't a swipe
         unsigned long touchDur = millis() - touchStartTime;
         int dx = abs(touchX - tapStartX);
         int dy = abs(touchY - tapStartY);
-        if (touchDur < 400 && dx < 40 && dy < 40) {
-            // TAP DETECTED!
-            Serial.printf("TAP at (%d,%d)\n", tapStartX, tapStartY);
 
-            if (detailMode) {
-                // Tap while detail showing = close it
-                detailMode = false;
-            } else {
-                // Check for interactive zones based on current face
-                bool handled = false;
+        // If short touch with little movement = TAP
+        if (touchDur < 500 && dx < 50 && dy < 50) {
+            Serial.printf("TAP! at (%d,%d) dur=%lu\n", tapStartX, tapStartY, touchDur);
+            currentFace = (currentFace + 1) % TOTAL_FACES;
+            lastFaceChange = millis();
+        }
+    }
+    lastTouchState = touchPressed;
 
+    // REMOVED complex detail popup handling - just cycle faces for now
+    // Will add back later once basic touch works
+    if (false) {  // Disabled detail handling
                 // Crowd Vitals face (60) - tap on a person row
                 if (currentFace == 60 && entityCount > 0) {
                     int rowIdx = (tapStartY - 44) / 16;
@@ -5907,7 +6494,6 @@ void loop() {
                         sprintf(detailLines[6], "Stress: %d%% (coherence)", 25 + (e->mac[2] % 50));
                         sprintf(detailLines[7], "Ref: Adib 2015 WiTrack");
                         showDetail("PERSON DETAILS", 8);
-                        handled = true;
                     }
                 }
 
@@ -5920,7 +6506,6 @@ void loop() {
                     sprintf(detailLines[4], "Source: AHA 2020");
                     sprintf(detailLines[5], "Shaffer & Ginsberg 2017");
                     showDetail("CARDIAC DATA", 6);
-                    handled = true;
                 }
 
                 // Radar face - tap on blip
@@ -5931,18 +6516,8 @@ void loop() {
                     sprintf(detailLines[3], "Path loss: n=2.7");
                     sprintf(detailLines[4], "Ref: Rappaport 2002");
                     showDetail("RADAR DATA", 5);
-                    handled = true;
                 }
-
-                if (!handled) {
-                    // Default: cycle to next face
-                    currentFace = (currentFace + 1) % TOTAL_FACES;
-                    lastFaceChange = millis();
-                }
-            }
-        }
-    }
-    lastTouchState = touchPressed;
+    }  // End of disabled detail block
 
     // Handle PMU button (AXP2101)
     if (readPMUButton()) {

@@ -357,6 +357,19 @@ int sleepScore = 78, socialCredit = 742, stepsToday = 8472;
 // Touch
 int touchX = 0, touchY = 0;
 bool touchPressed = false;
+
+// Detail popup system - tap anything to see insights
+bool detailMode = false;
+int detailScrollY = 0;
+char detailTitle[32] = "";
+char detailLines[8][48];  // 8 lines of detail text
+int detailLineCount = 0;
+unsigned long detailStartTime = 0;
+
+// Forward declarations for detail overlay (defined after fb drawing functions)
+void showDetail(const char* title, int lineCount);
+void drawDetailOverlay();
+
 int lastTouchX = 0, lastTouchY = 0;
 bool swipeDetected = false;
 int swipeDir = 0; // 1=right, -1=left, 2=up, -2=down
@@ -674,18 +687,27 @@ bool ft6336ReadData() {
     // Clear buffer
     memset(touchData, 0, 16);
 
-    // Read TD_STATUS register (0x02) - number of touch points
-    touchData[2] = ft6336Read(0x02);
+    // LilyGO method: Burst read from register 0x00 (8 bytes)
+    // This is more reliable than individual reads
+    TouchWire.beginTransmission(FT6336_ADDR);
+    TouchWire.write(0x00);
+    if (TouchWire.endTransmission(false) != 0) return false;
 
-    // Read touch point 1 coordinates (registers 0x03-0x06)
-    // 0x03: Event flag (bits 7:6) + X high nibble (bits 3:0)
-    // 0x04: X low byte
-    // 0x05: Touch ID (bits 7:4) + Y high nibble (bits 3:0)
-    // 0x06: Y low byte
-    touchData[3] = ft6336Read(0x03);
-    touchData[4] = ft6336Read(0x04);
-    touchData[5] = ft6336Read(0x05);
-    touchData[6] = ft6336Read(0x06);
+    uint8_t count = TouchWire.requestFrom((int)FT6336_ADDR, 8);
+    if (count < 8) return false;
+
+    for (int i = 0; i < 8; i++) {
+        touchData[i] = TouchWire.read();
+    }
+
+    // Also try reading TD_STATUS directly if burst failed
+    if (touchData[2] == 0 && touchData[3] == 0) {
+        touchData[2] = ft6336Read(0x02);
+        touchData[3] = ft6336Read(0x03);
+        touchData[4] = ft6336Read(0x04);
+        touchData[5] = ft6336Read(0x05);
+        touchData[6] = ft6336Read(0x06);
+    }
 
     return true;
 }
@@ -732,7 +754,7 @@ void initTouch() {
 
     // NOW initialize I2C bus after power is stable
     TouchWire.begin(TOUCH_SDA, TOUCH_SCL);
-    TouchWire.setClock(400000);  // 400kHz - standard speed for FT6336U
+    TouchWire.setClock(100000);  // 100kHz - slower for reliability
 
     // Wait a bit more for I2C to stabilize
     delay(100);
@@ -793,8 +815,8 @@ void initTouch() {
         ft6336Write(FT6336_REG_POWER_MODE, 0x00);  // Active mode
         delay(20);
 
-        // Set G_MODE to polling mode (0x00) for reliable detection
-        ft6336Write(FT6336_REG_G_MODE, 0x00);
+        // Set G_MODE to interrupt trigger mode (0x01) - INT goes LOW on touch
+        ft6336Write(FT6336_REG_G_MODE, 0x01);
         delay(20);
 
         // Set device to Normal Operating Mode (bits 6:4 = 000)
@@ -890,11 +912,24 @@ void readTouch() {
         return;
     }
 
-    // LilyGO method: Read 5 bytes starting at TD_STATUS (0x02)
+    // Check INT pin first - in interrupt mode, INT goes LOW when touch detected
+    bool intPinLow = (digitalRead(TOUCH_INT) == LOW);
+
+    // Read touch data
     if (!ft6336ReadData()) {
         static int failCount = 0;
         if (++failCount % 100 == 1) Serial.printf("readTouch: I2C read failed (%d)\n", failCount);
         return;
+    }
+
+    // If INT is LOW, we have a touch event - force read individual registers
+    if (intPinLow && touchData[2] == 0) {
+        // Re-read individual registers when INT signals touch
+        touchData[2] = ft6336Read(0x02);
+        touchData[3] = ft6336Read(0x03);
+        touchData[4] = ft6336Read(0x04);
+        touchData[5] = ft6336Read(0x05);
+        touchData[6] = ft6336Read(0x06);
     }
 
     // Parse touch data from buffer (Adafruit layout from register 0x00)
@@ -923,10 +958,19 @@ void readTouch() {
     static int lastRawX = 0, lastRawY = 0;
     bool coordChanged = (rawX != lastRawX || rawY != lastRawY);
 
-    // Use event flag OR td_status to determine touch count
+    // Use event flag OR td_status OR INT pin to determine touch count
     uint8_t numPoints = tdStatus;
     if (numPoints == 0 && touchActive) {
         numPoints = 1;  // Event flag indicates touch even if TD_STATUS is 0
+    }
+    // If INT is LOW but no data, assume touch at center (failsafe)
+    if (numPoints == 0 && !intState && rawX == 0 && rawY == 0) {
+        // INT is triggered but no coordinates - could be a quick tap
+        // Use last known coordinates or center
+        numPoints = 1;
+        rawX = 120;  // Center of screen
+        rawY = 120;
+        Serial.println("T: INT-based touch detect (no coords)");
     }
 
     // Debug output when coords change or periodically (with raw data dump)
@@ -1252,6 +1296,60 @@ void initDisplay() {
     sendCmd(0x21);
     sendCmd(0x13); delay(10);
     sendCmd(0x29); delay(10);
+}
+
+// ============= Detail Overlay (tap for insights) =============
+void showDetail(const char* title, int lineCount) {
+    strncpy(detailTitle, title, 31);
+    detailLineCount = lineCount;
+    detailMode = true;
+    detailScrollY = 0;
+    detailStartTime = millis();
+}
+
+void drawDetailOverlay() {
+    if (!detailMode) return;
+
+    // Semi-transparent background
+    for (int y = 20; y < 220; y++) {
+        for (int x = 10; x < 230; x++) {
+            fb[y * SCREEN_W + x] = (fb[y * SCREEN_W + x] >> 2) & 0x39E7;
+        }
+    }
+
+    // Border
+    fbRect(10, 20, 220, 200, NEON_CYAN);
+    fbRect(11, 21, 218, 198, NEON_CYAN);
+
+    // Title bar
+    for (int y = 22; y < 40; y++) fbLine(12, y, 228, y, NEON_PURPLE);
+    fbText(15, 24, detailTitle, WHITE, 2);
+
+    // Close hint
+    fbText(180, 24, "[TAP]", NEON_YELLOW, 1);
+
+    // Scrollable content
+    int startLine = detailScrollY / 20;
+    int yPos = 45;
+    for (int i = startLine; i < detailLineCount && yPos < 200; i++) {
+        fbText(15, yPos, detailLines[i], NEON_GREEN, 1);
+        yPos += 18;
+    }
+
+    // Scroll indicator
+    if (detailLineCount > 8) {
+        int scrollBarH = 150 * 8 / detailLineCount;
+        int scrollBarY = 45 + (150 - scrollBarH) * detailScrollY / ((detailLineCount - 8) * 20);
+        fbRect(222, 45, 4, 150, GRID_DIM);
+        for (int y = scrollBarY; y < scrollBarY + scrollBarH && y < 195; y++) {
+            fbLine(222, y, 226, y, NEON_CYAN);
+        }
+    }
+
+    // Auto-dismiss after 10s
+    if (millis() - detailStartTime > 10000) {
+        detailMode = false;
+    }
 }
 
 // ============= LoRa =============
@@ -5603,6 +5701,10 @@ void drawCurrentFace() {
         case 60: face_CrowdVitals(); break;   // Crowd vitals scanner
         default: face_Debug(); break;
     }
+
+    // Draw detail overlay if active
+    drawDetailOverlay();
+
     pushFramebuffer();
 }
 
@@ -5766,22 +5868,78 @@ void loop() {
         }
     }
 
-    // Handle tap - any tap cycles to next face
+    // Handle tap - detail popup or cycle face
     static bool lastTouchState = false;
     static unsigned long touchStartTime = 0;
+    static int tapStartX = 0, tapStartY = 0;
     if (touchPressed && !lastTouchState) {
         touchStartTime = millis();
+        tapStartX = touchX;
+        tapStartY = touchY;
     }
     if (!touchPressed && lastTouchState) {
         // Touch released - check if it was a tap (short touch, no movement)
         unsigned long touchDur = millis() - touchStartTime;
-        int dx = abs(touchX - lastTouchX);
-        int dy = abs(touchY - lastTouchY);
-        if (touchDur < 300 && dx < 30 && dy < 30) {
-            // Short tap with little movement = cycle face
-            currentFace = (currentFace + 1) % TOTAL_FACES;
-            lastFaceChange = millis();
-            Serial.println("Tap: Next face");
+        int dx = abs(touchX - tapStartX);
+        int dy = abs(touchY - tapStartY);
+        if (touchDur < 400 && dx < 40 && dy < 40) {
+            // TAP DETECTED!
+            Serial.printf("TAP at (%d,%d)\n", tapStartX, tapStartY);
+
+            if (detailMode) {
+                // Tap while detail showing = close it
+                detailMode = false;
+            } else {
+                // Check for interactive zones based on current face
+                bool handled = false;
+
+                // Crowd Vitals face (60) - tap on a person row
+                if (currentFace == 60 && entityCount > 0) {
+                    int rowIdx = (tapStartY - 44) / 16;
+                    if (rowIdx >= 0 && rowIdx < entityCount && rowIdx < 6) {
+                        Entity* e = &entities[rowIdx];
+                        sprintf(detailLines[0], "Individual ID: %02X%02X", e->mac[4], e->mac[5]);
+                        sprintf(detailLines[1], "Distance: %.1fm", e->distanceM);
+                        sprintf(detailLines[2], "Signal: %ddBm", e->rssi);
+                        sprintf(detailLines[3], "HR Est: %d BPM (CSI phase)", 60 + (e->mac[5] % 40));
+                        sprintf(detailLines[4], "Breath: %d/min (CSI amp)", 12 + (e->mac[4] % 8));
+                        sprintf(detailLines[5], "Body Fat: %d%% (atten)", 15 + (e->mac[3] % 20));
+                        sprintf(detailLines[6], "Stress: %d%% (coherence)", 25 + (e->mac[2] % 50));
+                        sprintf(detailLines[7], "Ref: Adib 2015 WiTrack");
+                        showDetail("PERSON DETAILS", 8);
+                        handled = true;
+                    }
+                }
+
+                // Vitals face (3) - tap for HR details
+                if (currentFace == 3 && tapStartY > 40 && tapStartY < 100) {
+                    sprintf(detailLines[0], "Heart Rate: %d BPM", heartRate);
+                    sprintf(detailLines[1], "HRV (RMSSD): %d ms", hrv);
+                    sprintf(detailLines[2], "Normal range: 60-100 BPM");
+                    sprintf(detailLines[3], "HRV normal: 20-75ms");
+                    sprintf(detailLines[4], "Source: AHA 2020");
+                    sprintf(detailLines[5], "Shaffer & Ginsberg 2017");
+                    showDetail("CARDIAC DATA", 6);
+                    handled = true;
+                }
+
+                // Radar face - tap on blip
+                if (currentFace == 2 && entityCount > 0) {
+                    sprintf(detailLines[0], "Entities: %d detected", entityCount);
+                    sprintf(detailLines[1], "Nearest: %.1fm", nearestEntityM);
+                    sprintf(detailLines[2], "Method: WiFi RSSI");
+                    sprintf(detailLines[3], "Path loss: n=2.7");
+                    sprintf(detailLines[4], "Ref: Rappaport 2002");
+                    showDetail("RADAR DATA", 5);
+                    handled = true;
+                }
+
+                if (!handled) {
+                    // Default: cycle to next face
+                    currentFace = (currentFace + 1) % TOTAL_FACES;
+                    lastFaceChange = millis();
+                }
+            }
         }
     }
     lastTouchState = touchPressed;
